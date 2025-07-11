@@ -46,14 +46,15 @@ ADC_HandleTypeDef hadc1;
 
 I2C_HandleTypeDef hi2c1;
 
+UART_HandleTypeDef hlpuart1;
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+
 RTC_HandleTypeDef hrtc;
 
 SD_HandleTypeDef hsd1;
 DMA_HandleTypeDef hdma_sdmmc1_rx;
 DMA_HandleTypeDef hdma_sdmmc1_tx;
-
-UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 DMA_HandleTypeDef hdma_sdmmc1;
@@ -70,6 +71,7 @@ static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_LPUART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
@@ -169,13 +171,16 @@ void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data) {
 	uint8_t wr[2] = {reg,data};
 	uint8_t res = HAL_I2C_Master_Transmit(&hi2c1,addr << 1,&wr,2,10000);
 	if (res != HAL_OK) {
-		printf("failed to receive data from I2C tensor - err code %i\r\n",hi2c1.ErrorCode);
+		printf("failed to write data to I2C tensor - err code %i\r\n",hi2c1.ErrorCode);
 		Error_Handler();
 	}
 }
 
+uint8_t alt_set = 0;
+float alt_ref;
 
-void Get_AltSens(float* tmp_ret, float* prs_ret, float* alt_ret) {
+
+void Get_TPSens(float* tmp_ret, float* prs_ret) {
 	uint8_t addr = 0x76;
 	uint8_t PSR_B2 = 0;
 	uint8_t TMP_B2 = 3;
@@ -287,15 +292,41 @@ void Get_AltSens(float* tmp_ret, float* prs_ret, float* alt_ret) {
 	*prs_ret = Pcomp;
 	*tmp_ret = Tcomp;
 
-	const uint32_t P0 = 101325; //pressure at MSL
-	const uint32_t h0 = 0; // height at sea level
-	const float R = 8.31432; // universal gas constant
-	const float g = 9.80665; // gravity acceleration
-	const float M = 0.0289644; // molar mass of air
-	const float T0 = -273.15; // absolute zero temp
-	*alt_ret = R*(Tcomp-T0)*log(Pcomp/P0)/(-g*M)+h0;
+}
+
+void Get_TPSens2(float* tmp_ret, float* prs_ret) {
+	uint8_t addr = 0x60;
+	uint8_t out_bytes[5];
+	uint8_t CTRL_REG1 = 0x26;
+	uint8_t PT_DATA_CFG = 0x13;
+	uint8_t STATUS = 0x00;
+
+	//enable data flags
+	Write_I2C_Reg(addr,PT_DATA_CFG,0x7);
+	//0x3A to CTRL_REG1 to activate one reading
+	Write_I2C_Reg(addr,CTRL_REG1,0x3B);
+	while ((Read_I2C_Reg(addr,STATUS) & 0x0e) != 0x0e) {
+		// wait until data ready
+	}
+	// read data
+	for (int i = 0; i < 5; i++) {
+		out_bytes[i] = Read_I2C_Reg(addr, i+1);
+	}
+	printf("{%i %i %i %i %i}\r\n",out_bytes[0],out_bytes[1],out_bytes[2],out_bytes[3],out_bytes[4]);
+	float pasc = (((out_bytes[2] >> 6) & 0x3) | (out_bytes[1] << 2) | (out_bytes[0] << 10)) + (((out_bytes[2] >> 4) & 0x3)/4.0);
+	*prs_ret = pasc;
+
+	int16_t itemp = ((out_bytes[4] >> 4) & 0xf) | (out_bytes[3] << 4);
+
+	if (itemp & 0x800) {
+		itemp |= 0xF000;
+	}
+	float temp = (float)itemp + (out_bytes[4] & 0xf)/16.0;
+	*tmp_ret = temp;
 
 }
+
+
 /* USER CODE END 0 */
 
 /**
@@ -338,6 +369,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   MX_I2C1_Init();
+  MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
   if (retSD != 0) {
 	  printf("Failed to Link SD.\r\n");
@@ -402,8 +434,13 @@ int main(void)
 			 uint8_t temp = Read_I2C_Reg(TEMP_SENS_ADDR,RTR);
 			 float temp2;
 			 float pascals;
-			 float altitude;
-			 Get_AltSens(&temp2,&pascals, &altitude);
+			 printf("Get pressure 1...\r\n");
+			 Get_TPSens(&temp2,&pascals);
+
+			 float temp3;
+			 float pascals2;
+			 printf("Get pressure 2...\r\n");
+			 Get_TPSens2(&temp3, &pascals2);
 
 			 //printf("Received from GPS: %s\r\n",recv);
 			 /*HAL_ADC_Start(&hadc1);
@@ -459,10 +496,10 @@ int main(void)
 				 gpsOut.la = -1.0;
 				 gpsOut.lo = -1.0;
 			 }
-			 sprintf(write_str, "%i,%02i/%02i/%02i,%02i:%02i:%02i %s,%f,%f,%i°C,%.2f°C,%.2f Pa,%.2f m,\0\0", elapsed_s,
+			 sprintf(write_str, "%i,20%02i-%02i-%02i,%02i:%02i:%02i %s,%f,%f,%i,%.2f,%.2f,%.2f,%.2f\0\0", elapsed_s,
+					 da.Year,
 					 da.Month,
 					 da.Date,
-					 da.Year,
 					 ti.Hours,
 					 ti.Minutes,
 					 ti.Seconds,
@@ -471,8 +508,9 @@ int main(void)
 					 gpsOut.lo,
 					 temp,
 					 temp2,
+					 temp3,
 					 pascals,
-					 altitude);
+					 pascals2);
 			 printf("> %s\r\n", write_str);
 
 			 write_str[strlen(write_str)-1] = '\n';
@@ -515,7 +553,7 @@ int main(void)
 					Error_Handler();
 				}
 				printf("File pointer: %p\r\n",SDFile);
-				char* firstLine = "count,date,time,lat,long,temp1,temp2,pressure,altitude,\n";
+				char* firstLine = "count,date,time,lat,long,temp1 (°C),temp2 (°C),temp3(°C),pres1 (Pa),pres2 (Pa),\n";
 				f_write(&SDFile, firstLine, strlen(firstLine), NULL);
 
 				HAL_Delay(10);
@@ -726,6 +764,110 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief LPUART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_LPUART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN LPUART1_Init 0 */
+
+  /* USER CODE END LPUART1_Init 0 */
+
+  /* USER CODE BEGIN LPUART1_Init 1 */
+
+  /* USER CODE END LPUART1_Init 1 */
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 209700;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_7B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN LPUART1_Init 2 */
+
+  /* USER CODE END LPUART1_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 9600;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
   * @brief RTC Initialization Function
   * @param None
   * @retval None
@@ -814,76 +956,6 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Init.ClockDiv = 0;
   /* USER CODE BEGIN SDMMC1_Init 2 */
   /* USER CODE END SDMMC1_Init 2 */
-
-}
-
-/**
-  * @brief USART1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART1_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART1_Init 0 */
-
-  /* USER CODE END USART1_Init 0 */
-
-  /* USER CODE BEGIN USART1_Init 1 */
-
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 9600;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART1_Init 2 */
-
-  /* USER CODE END USART1_Init 2 */
-
-}
-
-/**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART2_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
 
 }
 
