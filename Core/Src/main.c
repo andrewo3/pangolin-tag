@@ -58,6 +58,12 @@ DMA_HandleTypeDef hdma_sdmmc1_tx;
 
 /* USER CODE BEGIN PV */
 DMA_HandleTypeDef hdma_sdmmc1;
+uint8_t on = 0;
+uint32_t start_ms;
+uint8_t state_change = 0;
+
+RTC_TimeTypeDef ti;
+RTC_DateTypeDef da;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -151,6 +157,15 @@ uint8_t BSP_SD_WriteBlocks_DMA(uint32_t *pData, uint32_t WriteAddr, uint32_t Num
 	  return sd_state;
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	if (GPIO_Pin == Push_Button_Pin) {
+	  printf("Button pressed.\r\n");
+	  state_change = 1;
+	  on ^= 1;
+	}
+
+}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -164,6 +179,12 @@ uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg) {
 		printf("failed to receive data from I2C tensor - err code %i\r\n",hi2c1.ErrorCode);
 		Error_Handler();
 	}
+	return out;
+}
+
+uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg) {
+	uint8_t out;
+	uint8_t res = HAL_I2C_Mem_Read(&hi2c1,addr << 1, reg, 1, &out, 1, 10000);
 	return out;
 }
 
@@ -304,24 +325,22 @@ void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	//enable data flags
 	Write_I2C_Reg(addr,PT_DATA_CFG,0x7);
 	//0x3A to CTRL_REG1 to activate one reading
-	Write_I2C_Reg(addr,CTRL_REG1,0x3B);
-	while ((Read_I2C_Reg(addr,STATUS) & 0x0e) != 0x0e) {
+	Write_I2C_Reg(addr,CTRL_REG1,0x39);
+	//printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
+	while ((Read_I2C_Reg_NoStop(addr,STATUS) & 0x0e) != 0x0e) {
 		// wait until data ready
 	}
 	// read data
 	for (int i = 0; i < 5; i++) {
-		out_bytes[i] = Read_I2C_Reg(addr, i+1);
+		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1);
 	}
 	printf("{%i %i %i %i %i}\r\n",out_bytes[0],out_bytes[1],out_bytes[2],out_bytes[3],out_bytes[4]);
 	float pasc = (((out_bytes[2] >> 6) & 0x3) | (out_bytes[1] << 2) | (out_bytes[0] << 10)) + (((out_bytes[2] >> 4) & 0x3)/4.0);
 	*prs_ret = pasc;
 
-	int16_t itemp = ((out_bytes[4] >> 4) & 0xf) | (out_bytes[3] << 4);
+	int8_t itemp = out_bytes[3];
 
-	if (itemp & 0x800) {
-		itemp |= 0xF000;
-	}
-	float temp = (float)itemp + (out_bytes[4] & 0xf)/16.0;
+	float temp = (float)itemp + ((out_bytes[4]>>4) & 0xf)/16.0;
 	*tmp_ret = temp;
 
 }
@@ -398,33 +417,76 @@ int main(void)
 	}*/
   printf("Mounted FS from SDMMC at %s\r\n",SDPath);
 
-  uint32_t start_ms = HAL_GetTick();
+  start_ms = HAL_GetTick();
   uint32_t end_ms = start_ms;
 
   printf("Got start time.\r\n");
   uint32_t elapsed_s = 0;
   uint32_t last_elapsed_s = 0;
   char write_str[256];
-  uint8_t on = 0;
 
-  RTC_TimeTypeDef ti;
-  RTC_DateTypeDef da;
   char* AmPm[2] = {"AM","PM"};
   char* days[7] = {"Mon","Tue","Wed","Thur","Fri","Sat","Sun"};
 
   uint8_t recv[83];
   const uint16_t TEMP_SENS_ADDR = 0b1001000;
   uint8_t RTR = 0;
+  uint8_t file_open = 0;
+  char* path = "data.csv";
+  uint8_t led_on = 1;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	 end_ms = HAL_GetTick();
+	 last_elapsed_s = elapsed_s;
+	 elapsed_s = (end_ms - start_ms) / 1000;
+	 //check battery
+	 HAL_ADC_Start(&hadc1);
+	 HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	 uint32_t cV = (HAL_ADC_GetValue(&hadc1) & 0xfff) * 2;
+	 float V = cV/100.0 + 0.1;
+	 //printf("%.02f V\r\n", V);
+
+	 //determine LED
+	 if (elapsed_s != last_elapsed_s) {
+		 if (V < 3.6) {
+			 led_on ^= 1;
+		 } else {
+			 led_on = 1;
+		 }
+		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
+	 }
+
+	  if (state_change) {
+		  blink(5,50);
+		  state_change = 0;
+		  if (on) {
+			printf("Opening file\r\n");
+
+			HAL_RTC_GetTime(&hrtc, &ti, RTC_FORMAT_BCD);
+			HAL_RTC_GetDate(&hrtc, &da, RTC_FORMAT_BCD);
+
+			FRESULT res = 1;
+			do {
+				res = f_open(&SDFile, path, FA_CREATE_ALWAYS | FA_WRITE);
+				if (res != FR_OK) {
+					printf("Failed to open %s - error code: %i\r\n",path,res);
+					Error_Handler();
+				}
+				printf("File pointer: %p\r\n",SDFile);
+				char* firstLine = "count,date,time,lat,long,temp1 (°C),temp2 (°C),temp3(°C),pres1 (Pa),pres2 (Pa),voltage,\n";
+				f_write(&SDFile, firstLine, strlen(firstLine), NULL);
+				f_close(&SDFile);
+				HAL_Delay(10);
+			} while (res != FR_OK);
+			start_ms = HAL_GetTick();
+		  }
+	  }
 	 if (on) {
 		 //count elapsed seconds
-		 end_ms = HAL_GetTick();
-		 elapsed_s = (end_ms - start_ms) / 1000;
 		 //on new second, write to file
 		 if (elapsed_s != last_elapsed_s) {
 
@@ -443,11 +505,7 @@ int main(void)
 			 Get_TPSens2(&temp3, &pascals2);
 
 			 //printf("Received from GPS: %s\r\n",recv);
-			 /*HAL_ADC_Start(&hadc1);
-			 HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-			 uint32_t cV = (HAL_ADC_GetValue(&hadc1) & 0xfff) * 200 / 167;
-			 printf("%i.%02i V\r\n", cV/100, cV%100);*/
-			 uint32_t cV = 400; // placeholder for battery voltage
+			 //uint32_t cV = 400; // placeholder for battery voltage
 			 //HAL_
 			 int uart_res = 0;
 			 int msg_len = 0;
@@ -496,7 +554,7 @@ int main(void)
 				 gpsOut.la = -1.0;
 				 gpsOut.lo = -1.0;
 			 }
-			 sprintf(write_str, "%i,20%02i-%02i-%02i,%02i:%02i:%02i %s,%f,%f,%i,%.2f,%.2f,%.2f,%.2f\0\0", elapsed_s,
+			 sprintf(write_str, "%i,20%02i-%02i-%02i,%02i:%02i:%02i %s,%f,%f,%i,%.2f,%.2f,%.2f,%.2f,%.2f,\0\0", elapsed_s,
 					 da.Year,
 					 da.Month,
 					 da.Date,
@@ -510,18 +568,24 @@ int main(void)
 					 temp2,
 					 temp3,
 					 pascals,
-					 pascals2);
+					 pascals2,
+					 V);
 			 printf("> %s\r\n", write_str);
 
 			 write_str[strlen(write_str)-1] = '\n';
+			 // write to SD
+			 FRESULT res = f_open(&SDFile, path, FA_OPEN_APPEND|FA_WRITE);
+			 if (res != FR_OK) {
+				printf("Failed to reopen %s - error code: %i\r\n",path,res);
+				Error_Handler();
+			 }
+			 res = f_write(&SDFile,write_str, strlen(write_str), NULL);
+			 f_close(&SDFile);
 
-			 FRESULT res = f_write(&SDFile,write_str, strlen(write_str), NULL);
 			 printf("write result: %i\r\n",res);
 			 if (res != FR_OK) {
 				 Error_Handler();
 			 }
-
-			 last_elapsed_s = elapsed_s;
 			 blink(1,100);
 			 //blink a second time every second to indicate that it is functioning if the SD card was detected
 			 if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_10) == 1) {
@@ -532,38 +596,6 @@ int main(void)
 	 } else {
 		 blink(1,100);
 	 }
-
-	 //if button pressed
-  	 if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == 0) {
-  		 printf("Button pressed.\r\n");
-		  if (on) {
-			f_close(&SDFile);
-		  } else {
-			printf("Opening file\r\n");
-
-			HAL_RTC_GetTime(&hrtc, &ti, RTC_FORMAT_BCD);
-			HAL_RTC_GetDate(&hrtc, &da, RTC_FORMAT_BCD);
-
-			FRESULT res = 1;
-			do {
-				char* path = "data.csv";
-				res = f_open(&SDFile, path, FA_CREATE_ALWAYS | FA_WRITE);
-				if (res != FR_OK) {
-					printf("Failed to open %s - error code: %i\r\n",path,res);
-					Error_Handler();
-				}
-				printf("File pointer: %p\r\n",SDFile);
-				char* firstLine = "count,date,time,lat,long,temp1 (°C),temp2 (°C),temp3(°C),pres1 (Pa),pres2 (Pa),\n";
-				f_write(&SDFile, firstLine, strlen(firstLine), NULL);
-
-				HAL_Delay(10);
-			} while (res != FR_OK);
-			start_ms = HAL_GetTick();
-		  }
-		  on ^= 1;
-		  blink(5,50);
-  	  }
-
 	 HAL_Delay(10);
   }
     /* USER CODE END WHILE */
@@ -998,12 +1030,22 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pin : Push_Button_Pin */
+  GPIO_InitStruct.Pin = Push_Button_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(Push_Button_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PC3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LD2_Pin */
@@ -1018,6 +1060,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
