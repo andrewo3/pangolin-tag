@@ -437,29 +437,7 @@ int main(void)
   uint8_t led_on = 1;
   long count = 0;
   float ADC_off = 0.15;
-  float MOS_drop = 0;
-
-  DateTime test_tida;
-  test_tida.da.Year = 25;
-  test_tida.da.Month = 8;
-  test_tida.da.Date = 4;
-
-  test_tida.ti.Hours = 8;
-  test_tida.ti.Minutes = 53;
-  test_tida.ti.Seconds = 2;
-  test_tida.ti.TimeFormat = 1;
-  /*long ep_test = toepoch(test_tida);
-  printf("Test epoch: %i\r\n",ep_test);
-  DateTime recreated = fromepoch(ep_test);
-  printf("Test datetime: 20%02i-%02i-%02i,%02i:%02i:%02i %s\r\n",
-		  recreated.da.Year,
-		  recreated.da.Month,
-		  recreated.da.Date,
-		  recreated.ti.Hours,
-		  recreated.ti.Minutes,
-		  recreated.ti.Seconds,
-		  AmPm[recreated.ti.TimeFormat]
-			  );*/
+  float MOS_drop = 0.12;
   /* USER CODE END 2 */
 
   /* Infinite loop */
