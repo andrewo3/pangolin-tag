@@ -61,12 +61,16 @@ void Error_Handler(void);
 #define Push_Button_Pin GPIO_PIN_13
 #define Push_Button_GPIO_Port GPIOC
 #define Push_Button_EXTI_IRQn EXTI15_10_IRQn
+#define Battery_LED_Pin GPIO_PIN_3
+#define Battery_LED_GPIO_Port GPIOC
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3
 #define USART_RX_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
+#define Error_LED_Pin GPIO_PIN_6
+#define Error_LED_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14

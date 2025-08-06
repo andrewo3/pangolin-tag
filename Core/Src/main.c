@@ -25,6 +25,8 @@
 /* USER CODE BEGIN Includes */
 #include "gps.h"
 #include <math.h>
+#include <string.h>
+#include "datetime.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,6 +63,7 @@ DMA_HandleTypeDef hdma_sdmmc1;
 uint8_t on = 0;
 uint32_t start_ms;
 uint8_t state_change = 0;
+long last_button_press = 0;
 
 RTC_TimeTypeDef ti;
 RTC_DateTypeDef da;
@@ -158,10 +161,11 @@ uint8_t BSP_SD_WriteBlocks_DMA(uint32_t *pData, uint32_t WriteAddr, uint32_t Num
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (GPIO_Pin == Push_Button_Pin) {
-	  printf("Button pressed.\r\n");
-	  state_change = 1;
+	if (GPIO_Pin == Push_Button_Pin && HAL_GetTick() - last_button_press > 300) {
+	  last_button_press = HAL_GetTick();
+	  printf("LOG: Button pressed.\r\n");
 	  on ^= 1;
+	  state_change = 1;
 	}
 
 }
@@ -176,7 +180,7 @@ uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg) {
 	uint8_t res = HAL_I2C_Master_Transmit(&hi2c1,addr << 1,&reg,1,10000);
 	res = HAL_I2C_Master_Receive(&hi2c1,addr << 1,&out,1,10000);
 	if (res != HAL_OK) {
-		printf("failed to receive data from I2C tensor - err code %i\r\n",hi2c1.ErrorCode);
+		printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
 		Error_Handler();
 	}
 	return out;
@@ -185,6 +189,10 @@ uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg) {
 uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg) {
 	uint8_t out;
 	uint8_t res = HAL_I2C_Mem_Read(&hi2c1,addr << 1, reg, 1, &out, 1, 10000);
+	if (res != HAL_OK) {
+		printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
+		Error_Handler();
+	}
 	return out;
 }
 
@@ -192,7 +200,7 @@ void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data) {
 	uint8_t wr[2] = {reg,data};
 	uint8_t res = HAL_I2C_Master_Transmit(&hi2c1,addr << 1,&wr,2,10000);
 	if (res != HAL_OK) {
-		printf("failed to write data to I2C tensor - err code %i\r\n",hi2c1.ErrorCode);
+		printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
 		Error_Handler();
 	}
 }
@@ -334,7 +342,7 @@ void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	for (int i = 0; i < 5; i++) {
 		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1);
 	}
-	printf("{%i %i %i %i %i}\r\n",out_bytes[0],out_bytes[1],out_bytes[2],out_bytes[3],out_bytes[4]);
+	//printf("{%i %i %i %i %i}\r\n",out_bytes[0],out_bytes[1],out_bytes[2],out_bytes[3],out_bytes[4]);
 	float pasc = (((out_bytes[2] >> 6) & 0x3) | (out_bytes[1] << 2) | (out_bytes[0] << 10)) + (((out_bytes[2] >> 4) & 0x3)/4.0);
 	*prs_ret = pasc;
 
@@ -390,37 +398,28 @@ int main(void)
   MX_I2C1_Init();
   MX_LPUART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
   if (retSD != 0) {
-	  printf("Failed to Link SD.\r\n");
+	  printf("ERR: Failed to Link SD.\r\n");
 	  Error_Handler();
   }
   printf("-----------------\r\n");
-  printf("Initialize\r\n");
 
   if(HAL_GPIO_ReadPin(SD_DETECT_GPIO_PORT, SD_DETECT_PIN) != GPIO_PIN_RESET) {
-	  printf("Detected SD.\r\n");
+	  printf("LOG: SD Card detected in slot.\r\n");
+  } else {
+	  printf("LOG: SD Card was not detected in slot.\r\n");
   }
   //mount sd card if exists
   if(f_mount(&SDFatFS, (TCHAR const*)SDPath, 1) != FR_OK)
 	{
-	  	printf("failed to mount sd card.\r\n");
+	  	printf("ERR: Failed to mount SD Card.\r\n");
 		Error_Handler();
 	}
-
-  printf("SD Card Path: %s\r\n",SDPath);
-  uint8_t rtext[_MAX_SS];// File read buffer
-  /*FRESULT res = f_mkfs((TCHAR const*)SDPath, FM_ANY, 0, rtext, sizeof(rtext));
-  if(res != FR_OK)
-	{
-	  	printf("failed to create filesystem on sd card - error code: %i\r\n", res);
-	  	Error_Handler();
-	}*/
-  printf("Mounted FS from SDMMC at %s\r\n",SDPath);
-
+  printf("LOG: Mounted SD Card at %s\r\n",SDPath);
   start_ms = HAL_GetTick();
   uint32_t end_ms = start_ms;
 
-  printf("Got start time.\r\n");
   uint32_t elapsed_s = 0;
   uint32_t last_elapsed_s = 0;
   char write_str[256];
@@ -432,8 +431,35 @@ int main(void)
   const uint16_t TEMP_SENS_ADDR = 0b1001000;
   uint8_t RTR = 0;
   uint8_t file_open = 0;
-  char* path = "data.csv";
+
+  uint8_t name_changed = 0;
+  char path[256] = "new_data.csv\0";
   uint8_t led_on = 1;
+  long count = 0;
+  float ADC_off = 0.15;
+  float MOS_drop = 0;
+
+  DateTime test_tida;
+  test_tida.da.Year = 25;
+  test_tida.da.Month = 8;
+  test_tida.da.Date = 4;
+
+  test_tida.ti.Hours = 8;
+  test_tida.ti.Minutes = 53;
+  test_tida.ti.Seconds = 2;
+  test_tida.ti.TimeFormat = 1;
+  /*long ep_test = toepoch(test_tida);
+  printf("Test epoch: %i\r\n",ep_test);
+  DateTime recreated = fromepoch(ep_test);
+  printf("Test datetime: 20%02i-%02i-%02i,%02i:%02i:%02i %s\r\n",
+		  recreated.da.Year,
+		  recreated.da.Month,
+		  recreated.da.Date,
+		  recreated.ti.Hours,
+		  recreated.ti.Minutes,
+		  recreated.ti.Seconds,
+		  AmPm[recreated.ti.TimeFormat]
+			  );*/
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -443,12 +469,13 @@ int main(void)
 	 end_ms = HAL_GetTick();
 	 last_elapsed_s = elapsed_s;
 	 elapsed_s = (end_ms - start_ms) / 1000;
+
 	 //check battery
 	 HAL_ADC_Start(&hadc1);
+	 HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 	 HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	 uint32_t cV = (HAL_ADC_GetValue(&hadc1) & 0xfff) * 2;
-	 float V = cV/100.0 + 0.1;
-	 //printf("%.02f V\r\n", V);
+	 uint32_t cV = HAL_ADC_GetValue(&hadc1);
+	 float V = ((3.3 * (float)cV/4095 * 3) + ADC_off + MOS_drop) * 2;
 
 	 //determine LED
 	 if (elapsed_s != last_elapsed_s) {
@@ -464,19 +491,31 @@ int main(void)
 		  blink(5,50);
 		  state_change = 0;
 		  if (on) {
-			printf("Opening file\r\n");
+			count = 0;
+			name_changed = 0;
 
 			HAL_RTC_GetTime(&hrtc, &ti, RTC_FORMAT_BCD);
 			HAL_RTC_GetDate(&hrtc, &da, RTC_FORMAT_BCD);
 
 			FRESULT res = 1;
 			do {
-				res = f_open(&SDFile, path, FA_CREATE_ALWAYS | FA_WRITE);
+				int tries = 1;
+				do {
+					if (tries > 1) {
+						printf("File already exists.\r\n");
+					}
+					printf("LOG: Attempting to create file %s\r\n",path);
+					res = f_open(&SDFile, path, FA_CREATE_NEW | FA_WRITE);
+					tries++;
+					if (res == FR_EXIST) {
+						sprintf(path,"new_data%i.csv\0",tries);
+					}
+				} while (res == FR_EXIST); // continue until file doesnt exist
 				if (res != FR_OK) {
-					printf("Failed to open %s - error code: %i\r\n",path,res);
+					printf("ERR: Failed to create %s - error code: %i\r\n",path,res);
 					Error_Handler();
 				}
-				printf("File pointer: %p\r\n",SDFile);
+				//printf("File pointer: %p\r\n",SDFile);
 				char* firstLine = "count,date,time,lat,long,temp1 (°C),temp2 (°C),temp3(°C),pres1 (Pa),pres2 (Pa),voltage,\n";
 				f_write(&SDFile, firstLine, strlen(firstLine), NULL);
 				f_close(&SDFile);
@@ -489,19 +528,19 @@ int main(void)
 		 //count elapsed seconds
 		 //on new second, write to file
 		 if (elapsed_s != last_elapsed_s) {
+			 count++;
 
-			 HAL_RTC_GetTime(&hrtc, &ti, RTC_FORMAT_BCD);
-			 HAL_RTC_GetDate(&hrtc, &da, RTC_FORMAT_BCD);
-			 printf("Get temperature...\r\n");
+			 printf("LOG: Reading Temp IC\r\n");
 			 uint8_t temp = Read_I2C_Reg(TEMP_SENS_ADDR,RTR);
+
 			 float temp2;
 			 float pascals;
-			 printf("Get pressure 1...\r\n");
+			 printf("LOG: Reading Barometer IC #1\r\n");
 			 Get_TPSens(&temp2,&pascals);
 
 			 float temp3;
 			 float pascals2;
-			 printf("Get pressure 2...\r\n");
+			 printf("LOG: Reading Barometer IC #2\r\n");
 			 Get_TPSens2(&temp3, &pascals2);
 
 			 //printf("Received from GPS: %s\r\n",recv);
@@ -509,18 +548,26 @@ int main(void)
 			 //HAL_
 			 int uart_res = 0;
 			 int msg_len = 0;
+
+			 printf("LOG: Querying GPS Module\r\n");
 			 char* current = recv;
 			 current++;
 			 uint8_t end = 0;
+			 //continue until RMC message found
 			 while (!end || strncmp(recv,"$GNRMC",6)) {
+
+				 //receive new character from GPS
 				 __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF);
 				  uart_res = HAL_UART_Receive(&huart1, current, 1, 1);
+				  //reset message length when end found
 				  if (current == recv) {
 					  msg_len = 0;
 				  }
+				  //if successful
 				  if (uart_res == 0) {
 					  current++;
 					  msg_len++;
+					  //if we reach end of message
 					  if ((*(current-1) == '\r' || *(current-1) == '\n') && current != recv) {
 						  *current = 0;
 						  current = recv;
@@ -531,19 +578,18 @@ int main(void)
 					  }
 				  }
 			 }
-			 printf("Len: %i, %s\r\n",msg_len, recv);
 			 char* RMC = recv;
 			 RMC[msg_len] = 0;
+			 printf("LOG: %s\r\n", RMC);
 
 			 GPSData gpsOut;
-			 printf("Parsing: %s\r\n",RMC);
 			 int gps_res = parseNMEA(RMC,&gpsOut);
 
 			 ti = gpsOut.ti;
 			 da = gpsOut.da;
 
-			 printf("GPS RESULT: %i\r\n",gps_res);
 			 if (gps_res != G_OK) {
+				 printf("LOG: Invalid GPS Fix. Writing placeholder values.\r\n");
 				 da.Month = 0;
 				 da.Date = 0;
 				 da.Year = 0;
@@ -553,6 +599,42 @@ int main(void)
 				 ti.TimeFormat = 0;
 				 gpsOut.la = -1.0;
 				 gpsOut.lo = -1.0;
+			 } else {
+				 printf("LOG: Valid GPS Fix. Setting RTC to match.\r\n");
+				 printf("LOG: 20%02i-%02i-%02i,%02i:%02i:%02i %s\r\n",
+						 da.Year,
+						 da.Month,
+						 da.Date,
+						 ti.Hours,
+						 ti.Minutes,
+						 ti.Seconds,
+						 AmPm[ti.TimeFormat]
+							  );
+				 HAL_RTC_SetTime(&hrtc, &ti, RTC_FORMAT_BCD);
+				 HAL_RTC_SetDate(&hrtc, &da, RTC_FORMAT_BCD);
+				 DateTime curTime = {.ti = ti,.da = da};
+				 DateTime startTime = fromepoch(toepoch(curTime) - count);
+
+				 if (!name_changed) {
+					 name_changed = 1;
+
+					 //change pathname
+					 char new_path[256];
+					 sprintf(new_path,"data_20%02i-%02i-%02i_%02i%02i%02i_%s.csv\0",startTime.da.Year,
+							 startTime.da.Month,
+							 startTime.da.Date,
+							 startTime.ti.Hours,
+							 startTime.ti.Minutes,
+							 startTime.ti.Seconds,
+							 AmPm[startTime.ti.TimeFormat]);
+					 printf("LOG: renaming file from %s to %s\r\n",path,new_path);
+					 int res = f_rename(path,new_path);
+					 if (res != FR_OK) {
+						printf("ERR: Failed to rename %s to %s - error code: %i\r\n",path,new_path,res);
+						Error_Handler();
+					 }
+					 strcpy(path,new_path);
+				 }
 			 }
 			 sprintf(write_str, "%i,20%02i-%02i-%02i,%02i:%02i:%02i %s,%f,%f,%i,%.2f,%.2f,%.2f,%.2f,%.2f,\0\0", elapsed_s,
 					 da.Year,
@@ -570,22 +652,23 @@ int main(void)
 					 pascals,
 					 pascals2,
 					 V);
-			 printf("> %s\r\n", write_str);
 
 			 write_str[strlen(write_str)-1] = '\n';
 			 // write to SD
 			 FRESULT res = f_open(&SDFile, path, FA_OPEN_APPEND|FA_WRITE);
 			 if (res != FR_OK) {
-				printf("Failed to reopen %s - error code: %i\r\n",path,res);
+				printf("ERR: Failed to reopen %s - error code: %i\r\n",path,res);
 				Error_Handler();
 			 }
 			 res = f_write(&SDFile,write_str, strlen(write_str), NULL);
 			 f_close(&SDFile);
 
-			 printf("write result: %i\r\n",res);
+			 printf("LOG: write result: %i\r\n",res);
 			 if (res != FR_OK) {
 				 Error_Handler();
 			 }
+			 printf("LOG: written line %i to csv.\r\n", count);
+			 printf("LOG: ADC measured at %f V.\r\n",V/2.0);
 			 blink(1,100);
 			 //blink a second time every second to indicate that it is functioning if the SD card was detected
 			 if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_10) == 1) {
@@ -733,7 +816,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_VBAT;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
@@ -1030,30 +1113,30 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Battery_LED_GPIO_Port, Battery_LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|Error_LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : Push_Button_Pin */
   GPIO_InitStruct.Pin = Push_Button_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Push_Button_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PC3 */
-  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  /*Configure GPIO pin : Battery_LED_Pin */
+  GPIO_InitStruct.Pin = Battery_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(Battery_LED_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin Error_LED_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|Error_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PA10 */
   GPIO_InitStruct.Pin = GPIO_PIN_10;
@@ -1082,6 +1165,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+	HAL_GPIO_WritePin(GPIOA, Error_LED_Pin, GPIO_PIN_SET);
   while (1)
   {
 	  blink(1,500);
