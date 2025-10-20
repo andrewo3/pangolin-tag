@@ -56,10 +56,10 @@
 
 /* External variables --------------------------------------------------------*/
 extern I2C_HandleTypeDef hi2c1;
-extern UART_HandleTypeDef huart1;
 extern DMA_HandleTypeDef hdma_sdmmc1_rx;
 extern DMA_HandleTypeDef hdma_sdmmc1_tx;
 extern SD_HandleTypeDef hsd1;
+extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
 extern DMA_HandleTypeDef hdma_sdmmc1;
 /* USER CODE END EV */
