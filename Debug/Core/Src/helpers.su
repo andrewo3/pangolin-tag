@@ -1,0 +1,8 @@
+../Core/Src/helpers.c:12:7:pollBatteryVoltage	24	static
+../Core/Src/helpers.c:21:6:setupAccSleep	24	static
+../Core/Src/helpers.c:61:6:setupAccWake	24	static
+../Core/Src/helpers.c:97:6:initSDCard	8	static
+../Core/Src/helpers.c:118:9:createLogFile	16	static
+../Core/Src/helpers.c:136:9:createDataFile	24	static
+../Core/Src/helpers.c:156:6:waitForInterruptAndWakeup	8	static,ignoring_inline_asm
+../Core/Src/helpers.c:177:6:ErrorHandler	8	static
