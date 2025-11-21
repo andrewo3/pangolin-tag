@@ -64,8 +64,8 @@ all: main-build
 main-build: SD.elf secondary-outputs
 
 # Tool invocations
-SD.elf SD.map: $(OBJS) $(USER_OBJS) D:\Projects\STM32\pangolin-tag\STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "SD.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Projects\STM32\pangolin-tag\STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SD.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+SD.elf SD.map: $(OBJS) $(USER_OBJS) /Users/andrewogundimu/STM32CubeIDE/workspace_1.18.1/SD_Read/SD/STM32L476RGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "SD.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/Users/andrewogundimu/STM32CubeIDE/workspace_1.18.1/SD_Read/SD/STM32L476RGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SD.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

@@ -1,5 +1,6 @@
 #include "helpers.h"
 #include "fatfs.h"
+#include "main.h"
 
 FIL LogFile;
 FIL DataFile;
@@ -20,6 +21,7 @@ float pollBatteryVoltage() {
 
 void setupAccSleep() {
 	//setup accelerometer for generating interrupts on movement
+	log_printf("LOG: Configuring accelerometer for sleep\r\n");
 	uint8_t ACC_ADDR = 0b0011001;
 	uint8_t x_reg = 0x28;
 	uint8_t y_reg = 0x2A;
@@ -36,24 +38,25 @@ void setupAccSleep() {
 	uint8_t REFERENCE = 0x26;
 
 	//set 100 Hz low-power mode
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG1, 0b01011111);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG1, 0b01011111,2);
 	// use high pass filter
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG2, 0b00001001);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG2, 0b00001001,2);
 	//enable interrupt 1
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG3, 0b01000000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG3, 0b01000000,2);
 	// set +-2g range
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG4, 0b00000000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG4, 0b00000000,2);
 	// latch interrupt 1
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG5, 0b00001000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG5, 0b00001000,2);
 	// set 384 mg threshold on interrupt
-	Write_I2C_Reg(ACC_ADDR, INT1_THS, 0b00011000);
+	Write_I2C_Reg(ACC_ADDR, INT1_THS, 0b00011000,2);
 	//set 20 ms duration before interrupt is recognized
-	Write_I2C_Reg(ACC_ADDR, INT1_DURATION, 0b00000010);
+	Write_I2C_Reg(ACC_ADDR, INT1_DURATION, 0b00000010,2);
 
-	uint8_t ref = Read_I2C_Reg(ACC_ADDR, REFERENCE);
+	uint8_t ref = Read_I2C_Reg(ACC_ADDR, REFERENCE,2);
 
 	//generate interrupt on high events of x, y, or z
-	Write_I2C_Reg(ACC_ADDR, INT1_CFG, 0b00101010);
+	Write_I2C_Reg(ACC_ADDR, INT1_CFG, 0b00101010,2);
+	log_printf("LOG: successfully configured accelerometer.\r\n");
 
 
 }
@@ -78,18 +81,18 @@ void setupAccWake() {
 	uint8_t int_event = Read_I2C_Reg(ACC_ADDR, INT1_SRC);
 
 	//low-power 1 Hz
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG1, 0b00011111);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG1, 0b00011111,2);
 	//no filters
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG2, 0b00000000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG2, 0b00000000,2);
 	//disable interrupts
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG3, 0b00000000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG3, 0b00000000,2);
 	//+-4g range
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG4, 0b00001000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG4, 0b00001000,2);
 	//no interrupt functions
-	Write_I2C_Reg(ACC_ADDR, CTRL_REG5, 0b00000000);
+	Write_I2C_Reg(ACC_ADDR, CTRL_REG5, 0b00000000,2);
 
 	//disable interrupts on high events of x, y, or z
-	Write_I2C_Reg(ACC_ADDR, INT1_CFG, 0b00000000);
+	Write_I2C_Reg(ACC_ADDR, INT1_CFG, 0b00000000,2);
 
 
 }
@@ -107,9 +110,10 @@ void initSDCard() {
 	  printf("SD Card was not detected in slot.\r\n");
 	}
 	//mount sd card if exists
-	if(f_mount(&SDFatFS, (TCHAR const*)SDPath, 1) != FR_OK)
+	FRESULT mount_success = f_mount(&SDFatFS, (TCHAR const*)SDPath, 1);
+	if(mount_success != FR_OK)
 	{
-		printf("ERR: Failed to mount SD Card.\r\n");
+		printf("ERR: Failed to mount SD Card. Error code: %i\r\n",mount_success);
 		Error_Handler();
 	}
 }
@@ -156,7 +160,8 @@ FRESULT createDataFile() {
 void waitForInterruptAndWakeup() {
 	//set accelerometer for sleep interrupts
 	setupAccSleep();
-	HAL_GPIO_WritePin(GPIOC, Power_Enable_Pin, GPIO_PIN_RESET);
+	//disable power. setting high causes sensors to turn off
+	HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
 	__HAL_GPIO_EXTI_CLEAR_IT(Push_Button_Pin);
 	__HAL_GPIO_EXTI_CLEAR_IT(Acc_Int_Pin);
 	__HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
@@ -168,7 +173,27 @@ void waitForInterruptAndWakeup() {
 	SystemClock_Config();
 	PeriphCommonClock_Config();
 	HAL_ResumeTick();
-	HAL_GPIO_WritePin(GPIOC, Power_Enable_Pin, GPIO_PIN_SET);
+
+	//initSDCard();
+	printf("SD mount: %p\r\n",&SDFatFS);
+
+	FRESULT log_res = f_open(&LogFile, log_path, FA_WRITE | FA_OPEN_APPEND);
+	if (log_res != FR_OK) {
+		printf("ERR: Failed to create log - error code: %i\r\n",log_res);
+		ErrorHandler();
+	}
+	f_close(&LogFile);
+	printf("Reopened log file.\r\n");
+
+	FRESULT data_res = f_open(&DataFile, data_path, FA_WRITE | FA_OPEN_APPEND);
+	if (data_res != FR_OK) {
+		log_printf("ERR: Failed to create data file - error code: %i\r\n",data_res);
+		ErrorHandler();
+	}
+	f_close(&DataFile);
+	printf("Reopened data file.\r\n");
+
+	HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_RESET);
 	start_ms = HAL_GetTick();
 	//set accelerometer to track motion when awake
 	setupAccWake();

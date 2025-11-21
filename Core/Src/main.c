@@ -49,6 +49,7 @@
 ADC_HandleTypeDef hadc1;
 
 I2C_HandleTypeDef hi2c1;
+I2C_HandleTypeDef hi2c2;
 
 RTC_HandleTypeDef hrtc;
 
@@ -81,6 +82,7 @@ static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
 #ifdef __GNUC__
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
@@ -113,7 +115,7 @@ void log_printf(const char* fmt, ...) {
 	vsprintf(buf,fmt,args);
 	va_end(args);
 
-	f_open(&LogFile, log_path, FA_OPEN_APPEND|FA_WRITE);
+	FRESULT open_success = f_open(&LogFile, log_path, FA_OPEN_APPEND|FA_WRITE);
 	f_write(&LogFile, buf, strlen(buf), NULL);
 	f_close(&LogFile);
 
@@ -194,32 +196,56 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg) {
+uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t dev) {
+	I2C_HandleTypeDef* i2cdev;
+	if (dev == 1) {
+		i2cdev = &hi2c1;
+	} else if (dev == 2) {
+		i2cdev = &hi2c2;
+	} else {
+		return HAL_ERROR; // wrong device
+	}
 	uint8_t out;
-	uint8_t res = HAL_I2C_Master_Transmit(&hi2c1,addr << 1,&reg,1,10000);
-	res = HAL_I2C_Master_Receive(&hi2c1,addr << 1,&out,1,10000);
+	uint8_t res = HAL_I2C_Master_Transmit(i2cdev,addr << 1,&reg,1,10000);
+	res = HAL_I2C_Master_Receive(i2cdev,addr << 1,&out,1,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
+		log_printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
 }
 
-uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg) {
+uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t dev) {
+	I2C_HandleTypeDef* i2cdev;
+	if (dev == 1) {
+		i2cdev = &hi2c1;
+	} else if (dev == 2) {
+		i2cdev = &hi2c2;
+	} else {
+		return HAL_ERROR; // wrong device
+	}
 	uint8_t out;
-	uint8_t res = HAL_I2C_Mem_Read(&hi2c1,addr << 1, reg, 1, &out, 1, 10000);
+	uint8_t res = HAL_I2C_Mem_Read(i2cdev,addr << 1, reg, 1, &out, 1, 10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
+		log_printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
 }
 
-void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data) {
+void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t dev) {
+	I2C_HandleTypeDef* i2cdev;
+	if (dev == 1) {
+		i2cdev = &hi2c1;
+	} else if (dev == 2) {
+		i2cdev = &hi2c2;
+	} else {
+		return; // wrong device
+	}
 	uint8_t wr[2] = {reg,data};
-	uint8_t res = HAL_I2C_Master_Transmit(&hi2c1,addr << 1,&wr,2,10000);
+	uint8_t res = HAL_I2C_Master_Transmit(i2cdev,addr << 1,&wr,2,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, hi2c1.ErrorCode);
+		log_printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
 		Error_Handler();
 	}
 }
@@ -250,10 +276,10 @@ void Get_TPSens(float* tmp_ret, float* prs_ret) {
 	};
 
 	//get coeffs
-	uint8_t coef_src = Read_I2C_Reg(addr,TMP_COEF_SRCE) & 0x80;
+	uint8_t coef_src = Read_I2C_Reg(addr,TMP_COEF_SRCE,1) & 0x80;
 	uint8_t coeffs[18] = {0};
 	for (int i = 0; i < 18; i++) {
-		coeffs[i] = Read_I2C_Reg(addr,i+0x10);
+		coeffs[i] = Read_I2C_Reg(addr,i+0x10,1);
 	}
 	int16_t c0 = ((coeffs[1] & 0xf0) >> 4) | ((int16_t)coeffs[0] << 4);
 	if (c0 & 0x800) {
@@ -278,29 +304,29 @@ void Get_TPSens(float* tmp_ret, float* prs_ret) {
 	int16_t c30 = coeffs[17] | (coeffs[16] << 8);
 
 	//enable pressure and temp
-	Write_I2C_Reg(addr,TMP_CFG,coef_src); // set correct temp measurement source
-	Write_I2C_Reg(addr,MEAS_CFG,7);
+	Write_I2C_Reg(addr,TMP_CFG,coef_src,1); // set correct temp measurement source
+	Write_I2C_Reg(addr,MEAS_CFG,7,1);
 	uint8_t meas = 0;
 
 	// wait until everything returns as ready
 	while (meas & 0xf0 != 0xf0) {
-		meas = Read_I2C_Reg(addr,MEAS_CFG);
+		meas = Read_I2C_Reg(addr,MEAS_CFG,1);
 	}
 
-	uint8_t cfg = Read_I2C_Reg(addr,CFG_REG);
+	uint8_t cfg = Read_I2C_Reg(addr,CFG_REG,1);
 	uint8_t tshift = (cfg & 0x8) ? 1 : 0;
 	uint8_t pshift = (cfg & 0x4) ? 1 : 0;
 
 	uint32_t kT = prec_table[tshift];
 	uint32_t kP = prec_table[pshift];
 
-	uint8_t tprec = Read_I2C_Reg(addr,TMP_CFG) & 0x7;
-	uint8_t pprec = Read_I2C_Reg(addr,PRS_CFG) & 0x7;
+	uint8_t tprec = Read_I2C_Reg(addr,TMP_CFG,1) & 0x7;
+	uint8_t pprec = Read_I2C_Reg(addr,PRS_CFG,1) & 0x7;
 
 	//get pressure measurement
 	int32_t psr = 0;
 	for (int i = 0; i < 3; i++) {
-		uint8_t b = Read_I2C_Reg(addr,PSR_B2+i);
+		uint8_t b = Read_I2C_Reg(addr,PSR_B2+i,1);
 		psr |= b << (2 - i) * 8;
 	}
 
@@ -315,7 +341,7 @@ void Get_TPSens(float* tmp_ret, float* prs_ret) {
 
 	int32_t tmp = 0;
 	for (int i = 0; i < 3; i++) {
-		uint8_t b = Read_I2C_Reg(addr,TMP_B2+i);
+		uint8_t b = Read_I2C_Reg(addr,TMP_B2+i,1);
 		tmp |=  b << (2 - i) * 8;
 	}
 
@@ -353,17 +379,17 @@ void Get_Acc(float* vacc) {
 	uint8_t CTRL_REG1 = 0x20;
 	uint8_t CTRL_REG4 = 0x23;
 
-	int16_t x_out = (Read_I2C_Reg(ACC_ADDR,x_reg) | (Read_I2C_Reg(ACC_ADDR,x_reg + 1) << 8)) >> 4;
+	int16_t x_out = (Read_I2C_Reg(ACC_ADDR,x_reg,2) | (Read_I2C_Reg(ACC_ADDR,x_reg + 1,2) << 8)) >> 4;
 	if (x_out & 0x800) {
 		x_out |= 0xF000;
 	}
 
-	int16_t y_out = (Read_I2C_Reg(ACC_ADDR,y_reg) | (Read_I2C_Reg(ACC_ADDR,y_reg + 1) << 8)) >> 4;
+	int16_t y_out = (Read_I2C_Reg(ACC_ADDR,y_reg,2) | (Read_I2C_Reg(ACC_ADDR,y_reg + 1,2) << 8)) >> 4;
 	if (y_out & 0x800) {
 		y_out |= 0xF000;
 	}
 
-	int16_t z_out = (Read_I2C_Reg(ACC_ADDR,z_reg) | (Read_I2C_Reg(ACC_ADDR,z_reg + 1) << 8)) >> 4;
+	int16_t z_out = (Read_I2C_Reg(ACC_ADDR,z_reg,2) | (Read_I2C_Reg(ACC_ADDR,z_reg + 1,2) << 8)) >> 4;
 	if (z_out & 0x800) {
 		z_out |= 0xF000;
 	}
@@ -382,16 +408,16 @@ void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	uint8_t STATUS = 0x00;
 
 	//enable data flags
-	Write_I2C_Reg(addr,PT_DATA_CFG,0x7);
+	Write_I2C_Reg(addr,PT_DATA_CFG,0x7,1);
 	//0x3A to CTRL_REG1 to activate one reading
-	Write_I2C_Reg(addr,CTRL_REG1,0x39);
+	Write_I2C_Reg(addr,CTRL_REG1,0x39,1);
 	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
-	while ((Read_I2C_Reg(addr,STATUS) & 0x0e) != 0x0e) {
+	while ((Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
 		// wait until data ready
 	}
 	// read data
 	for (int i = 0; i < 5; i++) {
-		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1);
+		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1,1);
 	}
 
 	float pasc = (((out_bytes[2] >> 6) & 0x3) | (out_bytes[1] << 2) | (out_bytes[0] << 10)) + (((out_bytes[2] >> 4) & 0x3)/4.0);
@@ -402,6 +428,18 @@ void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	float temp = (float)itemp + ((out_bytes[4]>>4) & 0xf)/16.0;
 	*tmp_ret = temp;
 
+}
+
+void init_everything() {
+	MX_GPIO_Init();
+	MX_DMA_Init();
+	MX_SDMMC1_SD_Init();
+	MX_FATFS_Init();
+	MX_RTC_Init();
+	MX_ADC1_Init();
+	MX_USART2_UART_Init();
+	MX_USART1_UART_Init();
+	MX_I2C1_Init();
 }
 
 
@@ -447,10 +485,13 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   MX_I2C1_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   /*
    * Initialize Processes
    */
+  //disable power to non-essential peripherals
+  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
   initSDCard();
   printf("LOG: Mounted SD Card at %s\r\n",SDPath);
 
@@ -481,12 +522,19 @@ int main(void)
   createDataFile();
 
   //disable power to non-essential peripherals
-  HAL_GPIO_WritePin(GPIOC, Power_Enable_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
 
   //
 
   waitForInterruptAndWakeup();
+  //initSDCard();
 
+  printf("SD mount (outside): %p\r\n",&SDFatFS);
+  printf("start log test\r\n");
+  f_open(&LogFile, log_path, FA_OPEN_APPEND|FA_WRITE);
+  f_write(&LogFile, "test\r\n", 6, NULL);
+  f_close(&LogFile);
+  printf("end log test\r\n");
 
   /* USER CODE END 2 */
 
@@ -871,6 +919,54 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.Timing = 0x10D19CE4;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
   * @brief RTC Initialization Function
   * @param None
   * @retval None
@@ -1067,11 +1163,14 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, Power_Enable_Pin|Battery_LED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Battery_LED_GPIO_Port, Battery_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|Error_LED_Pin, GPIO_PIN_RESET);
@@ -1081,13 +1180,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Push_Button_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : Power_Enable_Pin */
-  GPIO_InitStruct.Pin = Power_Enable_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(Power_Enable_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Battery_LED_Pin */
   GPIO_InitStruct.Pin = Battery_LED_Pin;
@@ -1099,8 +1191,15 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : Acc_Int_Pin */
   GPIO_InitStruct.Pin = Acc_Int_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Acc_Int_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Power_Enable_Pin */
+  GPIO_InitStruct.Pin = Power_Enable_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(Power_Enable_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD2_Pin Error_LED_Pin */
   GPIO_InitStruct.Pin = LD2_Pin|Error_LED_Pin;

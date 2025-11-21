@@ -1,8 +1,8 @@
-../Core/Src/helpers.c:12:7:pollBatteryVoltage	1
-../Core/Src/helpers.c:21:6:setupAccSleep	1
-../Core/Src/helpers.c:61:6:setupAccWake	1
-../Core/Src/helpers.c:97:6:initSDCard	4
-../Core/Src/helpers.c:118:9:createLogFile	3
-../Core/Src/helpers.c:136:9:createDataFile	3
-../Core/Src/helpers.c:156:6:waitForInterruptAndWakeup	1
-../Core/Src/helpers.c:177:6:ErrorHandler	1
+../Core/Src/helpers.c:13:7:pollBatteryVoltage	1
+../Core/Src/helpers.c:22:6:setupAccSleep	1
+../Core/Src/helpers.c:64:6:setupAccWake	1
+../Core/Src/helpers.c:100:6:initSDCard	4
+../Core/Src/helpers.c:122:9:createLogFile	3
+../Core/Src/helpers.c:140:9:createDataFile	3
+../Core/Src/helpers.c:160:6:waitForInterruptAndWakeup	3
+../Core/Src/helpers.c:202:6:ErrorHandler	1

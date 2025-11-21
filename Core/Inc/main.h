@@ -61,13 +61,13 @@ void Error_Handler(void);
 #define Push_Button_Pin GPIO_PIN_13
 #define Push_Button_GPIO_Port GPIOC
 #define Push_Button_EXTI_IRQn EXTI15_10_IRQn
-#define Power_Enable_Pin GPIO_PIN_0
-#define Power_Enable_GPIO_Port GPIOC
 #define Battery_LED_Pin GPIO_PIN_3
 #define Battery_LED_GPIO_Port GPIOC
 #define Acc_Int_Pin GPIO_PIN_0
 #define Acc_Int_GPIO_Port GPIOA
 #define Acc_Int_EXTI_IRQn EXTI0_IRQn
+#define Power_Enable_Pin GPIO_PIN_1
+#define Power_Enable_GPIO_Port GPIOA
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3
@@ -84,7 +84,7 @@ void Error_Handler(void);
 #define SWO_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+void init_everything();
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
