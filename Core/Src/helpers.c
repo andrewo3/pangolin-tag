@@ -1,12 +1,20 @@
 #include "helpers.h"
 #include "fatfs.h"
 #include "main.h"
+#include "bmi270.h"
+#include "stm32l4xx_hal_i2c.h"
+
+#define WRITE_CHUNK 512  // 512-byte chunk size
 
 FIL LogFile;
 FIL DataFile;
 char log_path[256];
 char data_path[256];
 uint8_t SD_buffer[32768];
+uint8_t bmi270addr = 0x68;
+struct bmi2_dev b270dev = {0};
+uint8_t button_wake = 0;
+uint8_t* SD_writebuf = SD_buffer;
 
 float ADC_off = 0.15;
 float MOS_drop = 0.12;
@@ -31,36 +39,113 @@ void pollADC(uint8_t** buffer) {
 	return;
 }
 
-void write_buf(uint8_t** buf,void* val, uint32_t sz) {
+void write_buf(uint8_t** buf,uint8_t* val, uint32_t sz) {
 	uint32_t current_sz = (*buf)-SD_buffer;
 	if (current_sz + sz >= 32768) { //buffer overflow
-		// write to SD
-		 FRESULT res = f_open(&DataFile, data_path, FA_OPEN_APPEND|FA_WRITE);
-		 if (res != FR_OK) {
-			log_printf("ERR: Failed to reopen %s - error code: %i\r\n",data_path,res);
-			Error_Handler();
-		 }
-		 res = f_write(&DataFile,SD_buffer, current_sz, NULL);
-		 f_close(&DataFile);
-		 *buf = SD_buffer;
+		flush_buf(buf);
 	}
 	memcpy(*buf,val,sz);
 	*buf+=sz;
-	printf("Write - new buf size: %i\r\n",(*buf)-SD_buffer);
 }
 
 void flush_buf(uint8_t** buf) {
 	uint32_t current_sz = (*buf)-SD_buffer;
 	FRESULT res = f_open(&DataFile, data_path, FA_OPEN_APPEND|FA_WRITE);
-	 if (res != FR_OK) {
+	if (res != FR_OK) {
 		log_printf("ERR: Failed to reopen %s - error code: %i\r\n",data_path,res);
 		Error_Handler();
-	 }
-	 res = f_write(&DataFile,SD_buffer, current_sz, NULL);
-	 char* end_char = "e";
-	 f_write(&DataFile,end_char,1,NULL);
-	 f_close(&DataFile);
-	 *buf = SD_buffer;
+	}
+	uint32_t remaining = current_sz;
+	uint8_t *p = SD_buffer;
+
+	while (remaining > 0) {
+		UINT bw;
+		UINT to_write = (remaining > WRITE_CHUNK) ? WRITE_CHUNK : remaining;
+		FRESULT res = f_write(&DataFile, p, to_write, &bw);
+		if (res != FR_OK || bw != to_write) {
+			log_printf("Write error or short write! res=%d, bw=%u\n", res, bw);
+			Error_Handler();
+		}
+		remaining -= to_write;
+		p += to_write;
+	}
+
+	UINT bytes_written;
+
+	char* end_char = "FLUSH";
+	res = f_write(&DataFile,end_char,5,&bytes_written);
+
+	if (res != FR_OK || bytes_written != 5) {
+		log_printf("ERR: Failed to flush buffer - error code: %i\r\n",res);
+		Error_Handler();
+	}
+	f_close(&DataFile);
+	*buf = SD_buffer;
+}
+
+void setupIMU() {
+	//write bmi270 config file
+	printf("Enabling BMI270...\r\n");
+
+
+	b270dev.intf = BMI2_I2C_INTF;
+	b270dev.read = bmi2_i2c_read;
+	b270dev.write = bmi2_i2c_write;
+	b270dev.delay_us = bmi2_delay_us;
+	b270dev.intf_ptr = &bmi270addr;
+	int8_t rslt;
+
+	rslt = bmi270_init(&b270dev);
+	if (rslt != BMI2_OK) {
+		log_printf("LOG: Failed to initialize BMI270: err - %i\r\n",rslt);
+	    Error_Handler();
+	}
+
+	struct bmi2_sens_config sens_cfg[2];
+
+	/* Configure which sensors you want to modify */
+	sens_cfg[0].type = BMI2_ACCEL;
+	sens_cfg[1].type = BMI2_GYRO;
+
+	/* Read current config */
+	rslt = bmi270_get_sensor_config(sens_cfg, 2, &b270dev);
+	if (rslt != BMI2_OK) {
+			log_printf("LOG: Failed to get BMI270 config: err - %i\r\n",rslt);
+		    Error_Handler();
+		}
+
+	/* Modify accelerometer parameters */
+	sens_cfg[0].cfg.acc.odr = BMI2_ACC_ODR_100HZ;   // or BMI2_ACC_ODR_50HZ
+	sens_cfg[0].cfg.acc.range = BMI2_ACC_RANGE_4G;  // typical for navigation
+	sens_cfg[0].cfg.acc.bwp = BMI2_ACC_NORMAL_AVG4; // filtering mode
+
+	/* Modify gyroscope parameters */
+	sens_cfg[1].cfg.gyr.odr = BMI2_GYR_ODR_100HZ;   // or BMI2_GYR_ODR_50HZ
+	sens_cfg[1].cfg.gyr.range = BMI2_GYR_RANGE_2000; // typical for navigation
+	sens_cfg[1].cfg.gyr.bwp = BMI2_GYR_NORMAL_MODE;
+
+	rslt = bmi270_set_sensor_config(sens_cfg, 2, &b270dev);
+	if (rslt != BMI2_OK) {
+			log_printf("LOG: Failed to set BMI270 config: err - %i\r\n",rslt);
+		    Error_Handler();
+		}
+
+	uint8_t sens_list[2] = { BMI2_ACCEL, BMI2_GYRO };
+	rslt = bmi270_sensor_enable(sens_list, 2, &b270dev);
+	if (rslt != BMI2_OK) {
+			log_printf("LOG: Failed to enable sensors for BMI270: err - %i\r\n",rslt);
+		    Error_Handler();
+		}
+
+	uint16_t fifo_conf = BMI2_FIFO_HEADER_EN | BMI2_FIFO_ACC_EN | BMI2_FIFO_GYR_EN | BMI2_FIFO_TIME_EN;
+
+	rslt = bmi2_set_fifo_config(fifo_conf, BMI2_ENABLE, &b270dev);
+	if (rslt != BMI2_OK) {
+				log_printf("LOG: Failed to enable FIFO for BMI270: err - %i\r\n",rslt);
+			    Error_Handler();
+			}
+	printf("Successfully enabled + configured BMI270.\r\n");
+
 }
 
 void setupTPSens() {
@@ -116,6 +201,44 @@ void setupAccSleep() {
 	log_printf("LOG: successfully configured accelerometer.\r\n");
 
 
+}
+
+int8_t bmi2_i2c_write(uint8_t regAddress, const uint8_t* dataBuffer, uint32_t numBytes, uint8_t* interfacePtr)
+
+{
+    if (HAL_I2C_Mem_Write(&hi2c1,
+                          (*interfacePtr)<<1,
+                          regAddress,
+                          I2C_MEMADD_SIZE_8BIT,
+                          (uint8_t*)dataBuffer,
+                          numBytes,
+                          HAL_MAX_DELAY) == HAL_OK)
+    {
+        return BMI2_OK;
+    }
+    return BMI2_E_COM_FAIL;
+}
+
+int8_t bmi2_i2c_read(uint8_t regAddress, uint8_t* dataBuffer, uint32_t numBytes, uint8_t* interfacePtr)
+{
+    if (HAL_I2C_Mem_Read(&hi2c1,
+                          (*interfacePtr)<<1,
+                          regAddress,
+                          I2C_MEMADD_SIZE_8BIT,
+                          dataBuffer,
+                          numBytes,
+                          HAL_MAX_DELAY) == HAL_OK)
+    {
+        return BMI2_OK;
+    }
+    return BMI2_E_COM_FAIL;
+}
+
+void bmi2_delay_us(uint32_t period, void *intf_ptr)
+{
+    // Bosch uses microseconds, STM32 HAL delays in ms.
+    // For small values you should use a timer-based delay if needed.
+    HAL_Delay(period / 1000);
 }
 
 void setupAccWake() {
@@ -251,11 +374,20 @@ void waitForInterruptAndWakeup() {
 	printf("Reopened data file.\r\n");
 
 	HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_RESET);
-	start_ms = HAL_GetTick();
+	if (button_wake) { // if button was pressed to wake back up, flush buffer into SD card.
+		 printf("Button press: flushing buffer...\r\n");
+		 flush_buf(&SD_writebuf);
+		 printf("???????????\r\n");
+		 button_wake = 0;
+	 }
 	//set accelerometer to track motion when awake
 	setupAccWake();
 	//setup temperature sensor
 	setupTPSens();
+	//setup BMI270
+	setupIMU();
+	//set start time
+	start_ms = HAL_GetTick();
 }
 
 void ErrorHandler()

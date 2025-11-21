@@ -67,7 +67,6 @@ uint8_t on = 0;
 uint32_t start_ms;
 uint8_t state_change = 0;
 long last_button_press = 0;
-uint8_t button_wake = 0;
 uint8_t imu_dt = 0; // in ms
 
 RTC_TimeTypeDef ti;
@@ -126,6 +125,8 @@ void log_printf(const char* fmt, ...) {
 }
 
 void log_raw(uint8_t** buffer, int status) {
+	enum PREFIX tp_type = M_LOG;
+	write_buf(buffer,&tp_type,sizeof(tp_type));
 	write_buf(buffer,&status,4);
 }
 
@@ -201,98 +202,59 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t dev) {
-	I2C_HandleTypeDef* i2cdev;
-	if (dev == 1) {
-		i2cdev = &hi2c1;
-	} else if (dev == 2) {
-		i2cdev = &hi2c2;
+uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t b270dev) {
+	I2C_HandleTypeDef* i2cb270dev;
+	if (b270dev == 1) {
+		i2cb270dev = &hi2c1;
+	} else if (b270dev == 2) {
+		i2cb270dev = &hi2c2;
 	} else {
-		return HAL_ERROR; // wrong device
+		return HAL_ERROR; // wrong b270device
 	}
 	uint8_t out;
-	uint8_t res = HAL_I2C_Master_Transmit(i2cdev,addr << 1,&reg,1,10000);
-	res = HAL_I2C_Master_Receive(i2cdev,addr << 1,&out,1,10000);
+	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&reg,1,10000);
+	res = HAL_I2C_Master_Receive(i2cb270dev,addr << 1,&out,1,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
+		log_printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
 }
 
-uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t dev) {
-	I2C_HandleTypeDef* i2cdev;
-	if (dev == 1) {
-		i2cdev = &hi2c1;
-	} else if (dev == 2) {
-		i2cdev = &hi2c2;
+uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t b270dev) {
+	I2C_HandleTypeDef* i2cb270dev;
+	if (b270dev == 1) {
+		i2cb270dev = &hi2c1;
+	} else if (b270dev == 2) {
+		i2cb270dev = &hi2c2;
 	} else {
-		return HAL_ERROR; // wrong device
+		return HAL_ERROR; // wrong b270device
 	}
 	uint8_t out;
-	uint8_t res = HAL_I2C_Mem_Read(i2cdev,addr << 1, reg, 1, &out, 1, 10000);
+	uint8_t res = HAL_I2C_Mem_Read(i2cb270dev,addr << 1, reg, 1, &out, 1, 10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
+		log_printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
 }
 
-void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t dev) {
-	I2C_HandleTypeDef* i2cdev;
-	if (dev == 1) {
-		i2cdev = &hi2c1;
-	} else if (dev == 2) {
-		i2cdev = &hi2c2;
+void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t b270dev) {
+	I2C_HandleTypeDef* i2cb270dev;
+	if (b270dev == 1) {
+		i2cb270dev = &hi2c1;
+	} else if (b270dev == 2) {
+		i2cb270dev = &hi2c2;
 	} else {
-		return; // wrong device
+		return; // wrong b270device
 	}
 	uint8_t wr[2] = {reg,data};
-	uint8_t res = HAL_I2C_Master_Transmit(i2cdev,addr << 1,&wr,2,10000);
+	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&wr,2,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, (*i2cdev).ErrorCode);
+		log_printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 }
-
-int8_t bmi2_i2c_write(uint8_t regAddress, const uint8_t* dataBuffer, uint32_t numBytes, BMI270_InterfaceData* interfacePtr)
-                      
-{
-    if (HAL_I2C_Mem_Write(&hi2c1,
-                          interfaceData->i2cAddress,
-                          regAddress,
-                          I2C_MEMADD_SIZE_8BIT,
-                          (uint8_t*)dataBuffer,
-                          numBytes,
-                          HAL_MAX_DELAY) == HAL_OK)
-    {
-        return BMI2_OK;
-    }
-    return BMI2_E_COM_FAIL;
-}
-
-int8_t bmi2_i2c_read(uint8_t regAddress, uint8_t* dataBuffer, uint32_t numBytes, BMI270_InterfaceData* interfacePtr)
-{
-    if (HAL_I2C_Mem_Read(&hi2c1,
-                          interfaceData->i2cAddress,
-                          regAddress,
-                          I2C_MEMADD_SIZE_8BIT,
-                          dataBuffer,
-                          numBytes,
-                          HAL_MAX_DELAY) == HAL_OK)
-    {
-        return BMI2_OK;
-    }
-    return BMI2_E_COM_FAIL;
-}
-
-void bmi2_delay_us(uint32_t period, void *intf_ptr)
-{
-    // Bosch uses microseconds, STM32 HAL delays in ms.
-    // For small values you should use a timer-based delay if needed.
-    HAL_Delay(period / 1000);
-}
-
 
 uint8_t alt_set = 0;
 float alt_ref;
@@ -456,50 +418,35 @@ void Raw_Acc(uint8_t** buf) {
 	write_buf(buf,&tp_type,sizeof(tp_type));
 	write_buf(buf,out,6);
 }
-void Setup_IMU() {
-	//write bmi270 config file
-	struct bmi2_dev dev = {0};
-
-	uint8_t i2c_addr = 0x68;
-	dev.intf = BMI2_I2C_INTF;
-	dev.read = bmi2_i2c_read;
-	dev.write = bmi2_i2c_write;
-	dev.delay_us = bmi2_delay_us;
-  BMI270_InterfaceData
-	dev.intf_ptr = &i2c_addr;
-	int8_t rslt;
-
-	rslt = bmi270_init(&dev);
-	if (rslt != BMI2_OK) {
-		log_printf("LOG: Failed to initialize BMI270.\r\n");
-	    Error_Handler();
-	}
-
-	rslt = bmi270_load_config(&dev);
-	if (rslt != BMI2_OK) {
-		log_printf("LOG: Failed to load BMI270 config.\r\n");
-	    Error_Handler();
-	}
-
-	uint8_t sens_list[2] = { BMI2_ACCEL, BMI2_GYRO };
-	rslt = bmi270_sensor_enable(sens_list, 2, &dev);
-
-}
 
 void Raw_IMU(uint8_t** buf) {
-	uint8_t IMU_ADDR = 0x68;
-	uint8_t DATA_8 = 0x0C; // start of actual data
-	uint8_t SENSORTIME = 0x18;
-	uint8_t imu_out[12];
-	uint8_t sensor_time[3];
 
-	for (int i = 0; i < 6; i++) {
-		imu_out[i] = Read_I2C_Reg(IMU_ADDR,DATA_8+i,1);
-	}
-	for (int i = 0; i < 3; i++) {
-		sensor_time[i] = Read_I2C_Reg(IMU_ADDR,SENSORTIME+i,1);
+	//get length of fifo
+	uint16_t fifo_length = 0;
+	int8_t rslt = bmi2_get_fifo_length(&fifo_length, &b270dev);
+	printf("Fifo length: %i\r\n",fifo_length);
+	if (rslt != BMI2_OK) {
+	    printf("Error getting FIFO length: %d\n", rslt);
+	    return;
 	}
 
+	//read off of fifo
+	uint8_t fifo_data[2048];
+	struct bmi2_fifo_frame fifo_frame = {0};
+	fifo_frame.data = fifo_data;
+	fifo_frame.length = fifo_length;
+
+	rslt = bmi2_read_fifo_data(&fifo_frame, &b270dev);
+
+	if (rslt != BMI2_OK) {
+	    printf("Error reading FIFO: %d\n", rslt);
+	    return;
+	}
+	enum PREFIX tp_type = M_IMU;
+	write_buf(buf,&tp_type,sizeof(tp_type));
+	write_buf(buf,&fifo_length,sizeof(fifo_length));
+	write_buf(buf,fifo_data,fifo_length);
+	printf("write length %i, at index %i\r\n",fifo_length,(*buf)-SD_buffer-fifo_length);
 
 
 }
@@ -637,7 +584,12 @@ int main(void)
 
   //reset RTC to epoch
   DateTime epoch = fromepoch(0);
-  HAL_RTC_SetDate(&hrtc,&epoch.da,RTC_FORMAT_BCD);
+  RTC_TimeTypeDef ti = epoch.ti;
+  RTC_DateTypeDef da = epoch.da;
+  printf("Start Date: %02i-%02i-%02i\r\n",da.Month,da.Date,da.Year);
+  printf("Start Time: %02i:%02i:%02i\r\n",ti.Hours,ti.Minutes,ti.Seconds);
+  HAL_RTC_SetDate(&hrtc,&epoch.da,RTC_FORMAT_BIN);
+  HAL_RTC_SetTime(&hrtc,&epoch.ti,RTC_FORMAT_BIN);
 
 
   //create file
@@ -649,11 +601,9 @@ int main(void)
   //
 
   waitForInterruptAndWakeup();
-  Setup_IMU();
   //initSDCard();
   led_on = 1;
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
-  uint8_t* SD_writebuf = SD_buffer;
 
   /* USER CODE END 2 */
 
@@ -661,19 +611,35 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	 if (button_wake) { // if button was pressed to wake back up, flush buffer into SD card.
-		 printf("Button wakeup: flushing buffer...\r\n");
-		 flush_buf(&SD_writebuf);
-		 button_wake = 0;
-	 }
 	 end_ms = HAL_GetTick();
 	 last_elapsed_s = elapsed_s;
 	 elapsed_s = (end_ms - start_ms) / 1000;
+
+	 if (button_wake) { // if button was pressed to wake back up, flush buffer into SD card.
+		 printf("Button press: flushing buffer...\r\n");
+		 flush_buf(&SD_writebuf);
+		 button_wake = 0;
+	 }
+
+	 Raw_IMU(&SD_writebuf);
 	 //check battery
 	 //float V = pollBatteryVoltage();
 	 //printf("Battery Voltage: %.2f V\r\n",V);
 	 //determine LED
 	 if (elapsed_s != last_elapsed_s) {
+		 HAL_RTC_GetTime(&hrtc,&ti,RTC_FORMAT_BIN);
+		 HAL_RTC_GetDate(&hrtc,&da,RTC_FORMAT_BIN);
+		 printf("Date: %02i-%02i-%02i\r\n",da.Month,da.Date,da.Year);
+		 printf("Time: %02i:%02i:%02i\r\n",ti.Hours,ti.Minutes,ti.Seconds);
+
+		 long total_elapsed = toepoch((DateTime){ti, da});
+		 printf("Elapsed time: %i\r\n",total_elapsed);
+		 enum PREFIX tp_type = M_TIME;
+
+		 write_buf(&SD_writebuf,&tp_type,sizeof(tp_type));
+		 write_buf(&SD_writebuf,&total_elapsed,sizeof(long));
+
+
 		 pollADC(&SD_writebuf);
 
 		 count++;
@@ -723,8 +689,8 @@ int main(void)
 		 }
 		 char* RMC = recv;
 		 RMC[msg_len] = 0;
-		 char* placeholder = "$GNRMC,151227.40,A,4723.54036,N,00826.88672,E,0.0,81.6,111022,,,R*7C";
-		 strcpy(RMC,placeholder);
+		 //char* placeholder = "$GNRMC,151227.40,A,4723.54036,N,00826.88672,E,0.0,81.6,111022,,,R*7C";
+		 //strcpy(RMC,placeholder);
 		 log_printf("LOG: %s\r\n", RMC);
 
 		 GPSData gpsOut;
@@ -784,13 +750,18 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
+
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 1;
@@ -816,6 +787,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+  /** Enables the Clock Security System
+  */
+  HAL_RCCEx_EnableLSECSS();
 }
 
 /**
@@ -1047,22 +1022,22 @@ static void MX_RTC_Init(void)
 
   /** Initialize RTC and set the Time and Date
   */
-  sTime.Hours = 0x1;
-  sTime.Minutes = 0x0;
-  sTime.Seconds = 0x30;
+  sTime.Hours = 1;
+  sTime.Minutes = 0;
+  sTime.Seconds = 30;
   sTime.TimeFormat = RTC_HOURFORMAT12_PM;
   sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
   sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
+  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK)
   {
     Error_Handler();
   }
   sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
   sDate.Month = RTC_MONTH_JUNE;
-  sDate.Date = 0x10;
-  sDate.Year = 0x25;
+  sDate.Date = 10;
+  sDate.Year = 25;
 
-  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK)
+  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK)
   {
     Error_Handler();
   }

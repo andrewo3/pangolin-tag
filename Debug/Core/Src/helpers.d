@@ -40,7 +40,9 @@ Core/Src/helpers.o: ../Core/Src/helpers.c ../Core/Inc/helpers.h \
  ../FATFS/Target/fatfs_platform.h \
  ../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h \
  ../Middlewares/Third_Party/FatFs/src/diskio.h \
- ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/sd_diskio.h
+ ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/sd_diskio.h \
+ ../Core/Inc/bmi270_api/bmi270.h ../Core/Inc/bmi270_api/bmi2.h \
+ ../Core/Inc/bmi270_api/bmi2_defs.h
 ../Core/Inc/helpers.h:
 ../FATFS/App/fatfs.h:
 ../Middlewares/Third_Party/FatFs/src/ff.h:
@@ -89,3 +91,6 @@ Core/Src/helpers.o: ../Core/Src/helpers.c ../Core/Inc/helpers.h \
 ../Middlewares/Third_Party/FatFs/src/diskio.h:
 ../Middlewares/Third_Party/FatFs/src/ff.h:
 ../FATFS/Target/sd_diskio.h:
+../Core/Inc/bmi270_api/bmi270.h:
+../Core/Inc/bmi270_api/bmi2.h:
+../Core/Inc/bmi270_api/bmi2_defs.h:

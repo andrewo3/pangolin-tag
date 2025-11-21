@@ -1,2 +1,0 @@
-../Core/Src/bmi270_maximum_fifo.c:112:8:bmi270_maximum_fifo_init	24	static
-../Core/Src/bmi270_maximum_fifo.c:196:15:null_ptr_check	24	static

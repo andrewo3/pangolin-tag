@@ -4,7 +4,7 @@
 #include "stm32l4xx_hal_rtc.h"
 
 const int CENTURY = 20;
-const int EPOCH_YEAR = 1970;
+const int EPOCH_YEAR = 2000;
 const int SECONDS_PER_YEAR = 31536000;
 const int SECONDS_PER_DAY = 86400;
 const int SECONDS_PER_HOUR = 3600;
@@ -22,7 +22,7 @@ long toepoch(DateTime tida) {
 	RTC_DateTypeDef da = tida.da;
 	int current_year = CENTURY * 100 + da.Year;
 	int num_years = current_year - EPOCH_YEAR;
-	int num_leap_years = (num_years + 2) / 4; // add 2 because 1972 was the first leap year after 1970
+	int num_leap_years = 1+ (num_years) / 4; // add 1 because 2000 was a leap year
 
 	//add up seconds from all years (no leap days)
 	long second_count = num_years * SECONDS_PER_YEAR;
@@ -69,15 +69,15 @@ DateTime fromepoch(long ep) {
 	ep %= leap_cycle;
 
 	int y = 0;
-	while (ep > 0 && y < 4) {
+	while (ep >= 0 && y < 4) {
 		ep -= SECONDS_PER_YEAR;
-		if (y == 2) {
+		if (y == 0) {
 			ep -= SECONDS_PER_DAY;
 		}
 		y++;
 	}
 	ep += SECONDS_PER_YEAR;
-	if (y == 3) {
+	if (y == 1) {
 		ep += SECONDS_PER_DAY;
 	}
 	year += y - 1;
@@ -86,7 +86,7 @@ DateTime fromepoch(long ep) {
 	//find current month
 	int m = 0;
 	int month;
-	for (month = 0; m < ep && month < 12; month++) {
+	for (month = 0; m <= ep && month < 12; month++) {
 		m += MONTH_DAYS[month] * SECONDS_PER_DAY;
 		//add extra day for february in a leap year
 		if (year % 4 == 0 && month == 1) {
