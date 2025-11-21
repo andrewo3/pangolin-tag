@@ -41,7 +41,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h \
  ../Middlewares/Third_Party/FatFs/src/diskio.h \
  ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/sd_diskio.h \
- ../Core/Inc/helpers.h ../Core/Inc/gps.h ../Core/Inc/datetime.h
+ ../Core/Inc/helpers.h ../Core/Inc/gps.h ../Core/Inc/datetime.h \
+ ../Core/Inc/bmi270.h ../Core/Inc/bmi2.h ../Core/Inc/bmi2_defs.h
 ../Core/Inc/main.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h:
 ../Core/Inc/stm32l4xx_hal_conf.h:
@@ -92,3 +93,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/helpers.h:
 ../Core/Inc/gps.h:
 ../Core/Inc/datetime.h:
+../Core/Inc/bmi270.h:
+../Core/Inc/bmi2.h:
+../Core/Inc/bmi2_defs.h:

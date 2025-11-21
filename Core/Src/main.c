@@ -29,6 +29,7 @@
 #include <string.h>
 #include "datetime.h"
 #include <stdarg.h>
+#include "bmi270.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,6 +67,8 @@ uint8_t on = 0;
 uint32_t start_ms;
 uint8_t state_change = 0;
 long last_button_press = 0;
+uint8_t button_wake = 0;
+uint8_t imu_dt = 0; // in ms
 
 RTC_TimeTypeDef ti;
 RTC_DateTypeDef da;
@@ -120,6 +123,10 @@ void log_printf(const char* fmt, ...) {
 	f_close(&LogFile);
 
 	printf("%s",buf);
+}
+
+void log_raw(uint8_t** buffer, int status) {
+	write_buf(buffer,&status,4);
 }
 
 HAL_StatusTypeDef SD_DMAConfigRx(SD_HandleTypeDef *hsd);
@@ -182,11 +189,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	printf("Interrupt Triggered\r\n");
 	if (GPIO_Pin == Push_Button_Pin && HAL_GetTick() - last_button_press > 300) {
 	    last_button_press = HAL_GetTick();
-	    printf("Button pressed.\r\n");
 	    on ^= 1;
 	    state_change = 1;
-	} else if (GPIO_Pin == Acc_Int_Pin) {
-		printf("Acc Interrupt Triggered\r\n");
+	    button_wake = 1;
 	}
 
 }
@@ -249,6 +254,50 @@ void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t dev) {
 		Error_Handler();
 	}
 }
+
+int8_t bmi2_i2c_write(uint8_t dev_id,
+                      uint8_t reg_addr,
+                      const uint8_t *data,
+                      uint16_t len)
+{
+    if (HAL_I2C_Mem_Write(&hi2c1,
+                          dev_id << 1,
+                          reg_addr,
+                          I2C_MEMADD_SIZE_8BIT,
+                          (uint8_t*)data,
+                          len,
+                          HAL_MAX_DELAY) == HAL_OK)
+    {
+        return BMI2_OK;
+    }
+    return BMI2_E_COM_FAIL;
+}
+
+int8_t bmi2_i2c_read(uint8_t dev_id,
+                     uint8_t reg_addr,
+                     uint8_t *data,
+                     uint16_t len)
+{
+    if (HAL_I2C_Mem_Read(&hi2c1,
+                         dev_id << 1,
+                         reg_addr,
+                         I2C_MEMADD_SIZE_8BIT,
+                         data,
+                         len,
+                         HAL_MAX_DELAY) == HAL_OK)
+    {
+        return BMI2_OK;
+    }
+    return BMI2_E_COM_FAIL;
+}
+
+void bmi2_delay_us(uint32_t period, void *intf_ptr)
+{
+    // Bosch uses microseconds, STM32 HAL delays in ms.
+    // For small values you should use a timer-based delay if needed.
+    HAL_Delay(period / 1000);
+}
+
 
 uint8_t alt_set = 0;
 float alt_ref;
@@ -400,17 +449,71 @@ void Get_Acc(float* vacc) {
 
 }
 
+void Raw_Acc(uint8_t** buf) {
+	uint8_t ACC_ADDR = 0b0011001;
+	uint8_t x_reg = 0x28;
+	uint8_t out[6];
+
+	for (int i = 0; i < 6; i++) {
+		out[i] = Read_I2C_Reg(ACC_ADDR,x_reg+i,2);
+	}
+	enum PREFIX tp_type = M_ACC;
+	write_buf(buf,&tp_type,sizeof(tp_type));
+	write_buf(buf,out,6);
+}
+void Setup_IMU() {
+	//write bmi270 config file
+	struct bmi2_dev dev = {0};
+
+	uint8_t i2c_addr = 0x68;
+	dev.intf = BMI2_I2C_INTF;
+	dev.read = bmi2_i2c_read;
+	dev.write = bmi2_i2c_write;
+	dev.delay_us = bmi2_delay_us;
+	dev.intf_ptr = &i2c_addr;
+	int8_t rslt;
+
+	rslt = bmi270_init(&dev);
+	if (rslt != BMI2_OK) {
+		log_printf("LOG: Failed to initialize BMI270.\r\n");
+	    Error_Handler();
+	}
+
+	rslt = bmi270_load_config(&dev);
+	if (rslt != BMI2_OK) {
+		log_printf("LOG: Failed to load BMI270 config.\r\n");
+	    Error_Handler();
+	}
+
+	uint8_t sens_list[2] = { BMI2_ACCEL, BMI2_GYRO };
+	rslt = bmi270_sensor_enable(sens_list, 2, &dev);
+
+}
+
+void Raw_IMU(uint8_t** buf) {
+	uint8_t IMU_ADDR = 0x68;
+	uint8_t DATA_8 = 0x0C; // start of actual data
+	uint8_t SENSORTIME = 0x18;
+	uint8_t imu_out[12];
+	uint8_t sensor_time[3];
+
+	for (int i = 0; i < 6; i++) {
+		imu_out[i] = Read_I2C_Reg(IMU_ADDR,DATA_8+i,1);
+	}
+	for (int i = 0; i < 3; i++) {
+		sensor_time[i] = Read_I2C_Reg(IMU_ADDR,SENSORTIME+i,1);
+	}
+
+
+
+}
+
 void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	uint8_t addr = 0x60;
 	uint8_t out_bytes[5];
 	uint8_t CTRL_REG1 = 0x26;
 	uint8_t PT_DATA_CFG = 0x13;
 	uint8_t STATUS = 0x00;
-
-	//enable data flags
-	Write_I2C_Reg(addr,PT_DATA_CFG,0x7,1);
-	//0x3A to CTRL_REG1 to activate one reading
-	Write_I2C_Reg(addr,CTRL_REG1,0x39,1);
 	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
 	while ((Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
 		// wait until data ready
@@ -428,6 +531,25 @@ void Get_TPSens2(float* tmp_ret, float* prs_ret) {
 	float temp = (float)itemp + ((out_bytes[4]>>4) & 0xf)/16.0;
 	*tmp_ret = temp;
 
+}
+
+void Raw_TPSens(uint8_t** buf) {
+	uint8_t addr = 0x60;
+	uint8_t out_bytes[5];
+	uint8_t CTRL_REG1 = 0x26;
+	uint8_t PT_DATA_CFG = 0x13;
+	uint8_t STATUS = 0x00;
+	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
+	while ((Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
+		// wait until data ready
+	}
+	// read data
+	for (int i = 0; i < 5; i++) {
+		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1,1);
+	}
+	enum PREFIX tp_type = M_TP;
+	write_buf(buf,&tp_type,sizeof(tp_type));
+	write_buf(buf,out_bytes,5);
 }
 
 void init_everything() {
@@ -517,6 +639,10 @@ int main(void)
   float ADC_off = 0.15;
   float MOS_drop = 0.12;
 
+  //reset RTC to epoch
+  DateTime epoch = fromepoch(0);
+  HAL_RTC_SetDate(&hrtc,&epoch.da,RTC_FORMAT_BCD);
+
 
   //create file
   createDataFile();
@@ -527,14 +653,11 @@ int main(void)
   //
 
   waitForInterruptAndWakeup();
+  Setup_IMU();
   //initSDCard();
-
-  printf("SD mount (outside): %p\r\n",&SDFatFS);
-  printf("start log test\r\n");
-  f_open(&LogFile, log_path, FA_OPEN_APPEND|FA_WRITE);
-  f_write(&LogFile, "test\r\n", 6, NULL);
-  f_close(&LogFile);
-  printf("end log test\r\n");
+  led_on = 1;
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
+  uint8_t* SD_writebuf = SD_buffer;
 
   /* USER CODE END 2 */
 
@@ -542,183 +665,105 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	 if (button_wake) { // if button was pressed to wake back up, flush buffer into SD card.
+		 printf("Button wakeup: flushing buffer...\r\n");
+		 flush_buf(&SD_writebuf);
+		 button_wake = 0;
+	 }
 	 end_ms = HAL_GetTick();
 	 last_elapsed_s = elapsed_s;
 	 elapsed_s = (end_ms - start_ms) / 1000;
 	 //check battery
-	 float V = pollBatteryVoltage();
-	 printf("Battery Voltage: %.2f V\r\n",V);
+	 //float V = pollBatteryVoltage();
+	 //printf("Battery Voltage: %.2f V\r\n",V);
 	 //determine LED
 	 if (elapsed_s != last_elapsed_s) {
-		 if (V < 3.6) {
-			 led_on ^= 1;
-		 } else {
-			 led_on = 1;
-		 }
-		 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
-	 }
-	 count++;
+		 pollADC(&SD_writebuf);
 
-	 log_printf("LOG: Reading Temp IC\r\n");
-	 uint8_t temp = 0;
-	 //uint8_t temp = Read_I2C_Reg(TEMP_SENS_ADDR,RTR);
+		 count++;
 
-	 float temp2 = 0;
-	 float pascals = 0;
-	 log_printf("LOG: Reading Barometer IC #1\r\n");
-	 //Get_TPSens(&temp2,&pascals);
+		 float temp3;
+		 float pascals2;
+		 log_printf("LOG: Reading Temp + Barometer IC #2\r\n");
+		 //Get_TPSens2(&temp3, &pascals2);
+		 Raw_TPSens(&SD_writebuf);
 
-	 float temp3;
-	 float pascals2;
-	 log_printf("LOG: Reading Barometer IC #2\r\n");
-	 Get_TPSens2(&temp3, &pascals2);
+		 float acc[3];
+		 log_printf("LOG: Reading Accelerometer\r\n");
+		 //Get_Acc(acc);
+		 Raw_Acc(&SD_writebuf);
+     
+		 int uart_res = 0;
+		 int msg_len = 0;
 
-	 float acc[3];
-	 log_printf("LOG: Reading Accelerometer\r\n");
-	 Get_Acc(acc);
+		 log_printf("LOG: Querying GPS Module\r\n");
+		 char* current = recv;
+		 current++;
+		 uint8_t end = 0;
+		 //continue until RMC message found
+		 while (!end || strncmp(recv,"$GNRMC",6)) {
 
-	 //log_printf("Received from GPS: %s\r\n",recv);
-	 //uint32_t cV = 400; // placeholder for battery voltage
-	 //HAL_
-	 int uart_res = 0;
-	 int msg_len = 0;
-
-	 log_printf("LOG: Querying GPS Module\r\n");
-	 char* current = recv;
-	 current++;
-	 uint8_t end = 0;
-	 //continue until RMC message found
-	 while (!end || strncmp(recv,"$GNRMC",6)) {
-
-		 //receive new character from GPS
-		 __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF);
-		  uart_res = HAL_UART_Receive(&huart1, current, 1, 1);
-		  //reset message length when end found
-		  if (current == recv) {
-			  msg_len = 0;
-		  }
-		  //if successful
-		  if (uart_res == 0) {
-			  current++;
-			  msg_len++;
-			  //if we reach end of message
-			  if ((*(current-1) == '\r' || *(current-1) == '\n') && current != recv) {
-				  *current = 0;
-				  current = recv;
-				  //log_printf("Found one GPS message: %s\r",recv);
-				  end = 1;
-			  } else {
-				  end = 0;
+			 //receive new character from GPS
+			 __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF);
+			  uart_res = HAL_UART_Receive(&huart1, current, 1, 1);
+			  //reset message length when end found
+			  if (current == recv) {
+				  msg_len = 0;
 			  }
-		  }
-	 }
-	 char* RMC = recv;
-	 RMC[msg_len] = 0;
-	 log_printf("LOG: %s\r\n", RMC);
-
-	 GPSData gpsOut;
-	 int gps_res = parseNMEA(RMC,&gpsOut);
-
-	 ti = gpsOut.ti;
-	 da = gpsOut.da;
-
-	 if (gps_res != G_OK) {
-		 log_printf("LOG: Invalid GPS Fix. Writing placeholder values.\r\n");
-		 da.Month = 0;
-		 da.Date = 0;
-		 da.Year = 0;
-		 ti.Hours = 0;
-		 ti.Minutes = 0;
-		 ti.Seconds = 0;
-		 ti.TimeFormat = 0;
-		 gpsOut.la = -1.0;
-		 gpsOut.lo = -1.0;
-	 } else {
-		 log_printf("LOG: Valid GPS Fix. Setting RTC to match.\r\n");
-		 log_printf("LOG: 20%02i-%02i-%02i,%02i:%02i:%02i %s\r\n",
-				 da.Year,
-				 da.Month,
-				 da.Date,
-				 ti.Hours,
-				 ti.Minutes,
-				 ti.Seconds,
-				 AmPm[ti.TimeFormat]
-					  );
-		 HAL_RTC_SetTime(&hrtc, &ti, RTC_FORMAT_BCD);
-		 HAL_RTC_SetDate(&hrtc, &da, RTC_FORMAT_BCD);
-		 DateTime curTime = {.ti = ti,.da = da};
-		 DateTime startTime = fromepoch(toepoch(curTime) - count);
-
-		 if (!name_changed) {
-			 name_changed = 1;
-
-			 //change pathname
-			 char new_path[256];
-			 sprintf(new_path,"data_20%02i-%02i-%02i_%02i%02i%02i_%s.csv\0",startTime.da.Year,
-					 startTime.da.Month,
-					 startTime.da.Date,
-					 startTime.ti.Hours,
-					 startTime.ti.Minutes,
-					 startTime.ti.Seconds,
-					 AmPm[startTime.ti.TimeFormat]);
-			 log_printf("LOG: renaming file from %s to %s\r\n",data_path,new_path);
-			 int res = f_rename(data_path,new_path);
-			 if (res != FR_OK) {
-				log_printf("ERR: Failed to rename %s to %s - error code: %i\r\n",data_path,new_path,res);
-				Error_Handler();
-			 }
-			 strcpy(data_path,new_path);
+			  //if successful
+			  if (uart_res == 0) {
+				  current++;
+				  msg_len++;
+				  //if we reach end of message
+				  if ((*(current-1) == '\r' || *(current-1) == '\n') && current != recv) {
+					  *current = 0;
+					  current = recv;
+					  //log_printf("Found one GPS message: %s\r",recv);
+					  end = 1;
+				  } else {
+					  end = 0;
+				  }
+			  }
 		 }
-	 }
-	 sprintf(write_str, "%i,20%02i-%02i-%02i,%02i:%02i:%02i %s,%f,%f,%.2f,%.2f,%f,%f,%f,%.2f,\0\0", elapsed_s,
-			 da.Year,
-			 da.Month,
-			 da.Date,
-			 ti.Hours,
-			 ti.Minutes,
-			 ti.Seconds,
-			 AmPm[ti.TimeFormat],
-			 gpsOut.la,
-			 gpsOut.lo,
-			 temp3,
-			 pascals2,
-			 acc[0],
-			 acc[1],
-			 acc[2],
-			 V);
+		 char* RMC = recv;
+		 RMC[msg_len] = 0;
+		 char* placeholder = "$GNRMC,151227.40,A,4723.54036,N,00826.88672,E,0.0,81.6,111022,,,R*7C";
+		 strcpy(RMC,placeholder);
+		 log_printf("LOG: %s\r\n", RMC);
 
-	 write_str[strlen(write_str)-1] = '\n';
-	 // write to SD
-	 FRESULT res = f_open(&DataFile, data_path, FA_OPEN_APPEND|FA_WRITE);
-	 if (res != FR_OK) {
-		log_printf("ERR: Failed to reopen %s - error code: %i\r\n",data_path,res);
-		Error_Handler();
-	 }
-	 res = f_write(&DataFile,write_str, strlen(write_str), NULL);
-	 f_close(&DataFile);
+		 GPSData gpsOut;
+		 int gps_res = parseNMEA(RMC,&gpsOut);
 
-	 log_printf("LOG: write result: %i\r\n",res);
-	 if (res != FR_OK) {
-		 Error_Handler();
-	 }
-	 log_printf("LOG: written line %i to csv.\r\n", count);
-	 log_printf("LOG: ADC measured at %f V.\r\n",V/2.0);
-	 blink(1,10);
-	 //blink every second to indicate that it is functioning if the SD card was detected
-	 if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_10) == 1) {
+		 ti = gpsOut.ti;
+		 da = gpsOut.da;
+
+		 if (gps_res == G_OK) {
+			 enum PREFIX gps_type = M_GPS;
+			 write_buf(&SD_writebuf,&gps_type,sizeof(gps_type));
+			 write_buf(&SD_writebuf,&recv,83);
+		 }
+
 		 blink(1,10);
-	 }
-	 //HAL_Delay(1000);
+		 //blink every second to indicate that it is functioning if the SD card was detected
+		 if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_10) == 1) {
+			 blink(1,10);
+		 }
+		 //HAL_Delay(1000);
 
-	 //if gps was found, or more than 5 minutes passed, go back to sleep and wait for interrupt.
-	 if (gps_res == G_OK || elapsed_s >= 10) {
-		 if (gps_res != G_OK) {
-			 log_printf("Timeout reached.");
-		 } else {
-			 log_printf("GPS Fix acquired.");
-	     }
-		 log_printf(" Going back to sleep...\r\n");
-		 waitForInterruptAndWakeup();
+		 //if gps was found, or more than 5 minutes passed, go back to sleep and wait for interrupt.
+		 if (gps_res == G_OK || elapsed_s >= 10) {
+			 led_on = 0;
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
+			 if (gps_res != G_OK) {
+				 log_printf("Timeout reached.");
+			 } else {
+				 log_printf("GPS Fix acquired.");
+			 }
+			 log_printf(" Going back to sleep...\r\n");
+			 waitForInterruptAndWakeup();
+			 led_on = 1;
+			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
+		 }
 	 }
   }
     /* USER CODE END WHILE */

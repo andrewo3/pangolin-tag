@@ -6,6 +6,7 @@ FIL LogFile;
 FIL DataFile;
 char log_path[256];
 char data_path[256];
+uint8_t SD_buffer[32768];
 
 float ADC_off = 0.15;
 float MOS_drop = 0.12;
@@ -17,6 +18,62 @@ float pollBatteryVoltage() {
 	uint32_t adc = HAL_ADC_GetValue(&hadc1);
 	float V = ((3.3 * (float)adc/4095 * 3) + ADC_off + MOS_drop) * 2;
 	return V;
+}
+
+void pollADC(uint8_t** buffer) {
+	HAL_ADC_Start(&hadc1);
+	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	uint32_t adc = HAL_ADC_GetValue(&hadc1);
+	enum PREFIX type = M_ADC;
+	write_buf(buffer,&type,sizeof(type));
+	write_buf(buffer,&adc,sizeof(adc));
+	return;
+}
+
+void write_buf(uint8_t** buf,void* val, uint32_t sz) {
+	uint32_t current_sz = (*buf)-SD_buffer;
+	if (current_sz + sz >= 32768) { //buffer overflow
+		// write to SD
+		 FRESULT res = f_open(&DataFile, data_path, FA_OPEN_APPEND|FA_WRITE);
+		 if (res != FR_OK) {
+			log_printf("ERR: Failed to reopen %s - error code: %i\r\n",data_path,res);
+			Error_Handler();
+		 }
+		 res = f_write(&DataFile,SD_buffer, current_sz, NULL);
+		 f_close(&DataFile);
+		 *buf = SD_buffer;
+	}
+	memcpy(*buf,val,sz);
+	*buf+=sz;
+	printf("Write - new buf size: %i\r\n",(*buf)-SD_buffer);
+}
+
+void flush_buf(uint8_t** buf) {
+	uint32_t current_sz = (*buf)-SD_buffer;
+	FRESULT res = f_open(&DataFile, data_path, FA_OPEN_APPEND|FA_WRITE);
+	 if (res != FR_OK) {
+		log_printf("ERR: Failed to reopen %s - error code: %i\r\n",data_path,res);
+		Error_Handler();
+	 }
+	 res = f_write(&DataFile,SD_buffer, current_sz, NULL);
+	 char* end_char = "e";
+	 f_write(&DataFile,end_char,1,NULL);
+	 f_close(&DataFile);
+	 *buf = SD_buffer;
+}
+
+void setupTPSens() {
+	uint8_t addr = 0x60;
+	uint8_t out_bytes[5];
+	uint8_t CTRL_REG1 = 0x26;
+	uint8_t PT_DATA_CFG = 0x13;
+	uint8_t STATUS = 0x00;
+
+	//enable data flags
+	Write_I2C_Reg(addr,PT_DATA_CFG,0x7,1);
+	//0x3A to CTRL_REG1 to activate one reading
+	Write_I2C_Reg(addr,CTRL_REG1,0x39,1);
 }
 
 void setupAccSleep() {
@@ -141,7 +198,7 @@ FRESULT createDataFile() {
 	FRESULT data_res;
 	int data_num = 0;
 	do {
-		sprintf(data_path,"data%i.csv\0",data_num);
+		sprintf(data_path,"data%i.bin\0",data_num);
 		//printf("Trying %s\r\n",log_path);
 		data_res = f_open(&DataFile, data_path, FA_CREATE_NEW | FA_WRITE);
 		data_num++;
@@ -151,10 +208,10 @@ FRESULT createDataFile() {
 		log_printf("ERR: Failed to create data file - error code: %i\r\n",data_res);
 		ErrorHandler();
 	}
-	char* firstLine = "count,date,time,lat,long,temp(°C),pres (Pa),xacc,yacc,zacc,voltage,\n";
+	char* firstLine = "i";
 	f_write(&DataFile, firstLine, strlen(firstLine), NULL);
 	f_close(&DataFile);
-	printf("Made data csv: %s\r\n",data_path);
+	printf("Made data file: %s\r\n",data_path);
 }
 
 void waitForInterruptAndWakeup() {
@@ -197,6 +254,8 @@ void waitForInterruptAndWakeup() {
 	start_ms = HAL_GetTick();
 	//set accelerometer to track motion when awake
 	setupAccWake();
+	//setup temperature sensor
+	setupTPSens();
 }
 
 void ErrorHandler()
