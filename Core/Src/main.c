@@ -255,17 +255,15 @@ void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t dev) {
 	}
 }
 
-int8_t bmi2_i2c_write(uint8_t dev_id,
-                      uint8_t reg_addr,
-                      const uint8_t *data,
-                      uint16_t len)
+int8_t bmi2_i2c_write(uint8_t regAddress, const uint8_t* dataBuffer, uint32_t numBytes, BMI270_InterfaceData* interfacePtr)
+                      
 {
     if (HAL_I2C_Mem_Write(&hi2c1,
-                          dev_id << 1,
-                          reg_addr,
+                          interfaceData->i2cAddress,
+                          regAddress,
                           I2C_MEMADD_SIZE_8BIT,
-                          (uint8_t*)data,
-                          len,
+                          (uint8_t*)dataBuffer,
+                          numBytes,
                           HAL_MAX_DELAY) == HAL_OK)
     {
         return BMI2_OK;
@@ -273,18 +271,15 @@ int8_t bmi2_i2c_write(uint8_t dev_id,
     return BMI2_E_COM_FAIL;
 }
 
-int8_t bmi2_i2c_read(uint8_t dev_id,
-                     uint8_t reg_addr,
-                     uint8_t *data,
-                     uint16_t len)
+int8_t bmi2_i2c_read(uint8_t regAddress, uint8_t* dataBuffer, uint32_t numBytes, BMI270_InterfaceData* interfacePtr)
 {
     if (HAL_I2C_Mem_Read(&hi2c1,
-                         dev_id << 1,
-                         reg_addr,
-                         I2C_MEMADD_SIZE_8BIT,
-                         data,
-                         len,
-                         HAL_MAX_DELAY) == HAL_OK)
+                          interfaceData->i2cAddress,
+                          regAddress,
+                          I2C_MEMADD_SIZE_8BIT,
+                          dataBuffer,
+                          numBytes,
+                          HAL_MAX_DELAY) == HAL_OK)
     {
         return BMI2_OK;
     }
@@ -470,6 +465,7 @@ void Setup_IMU() {
 	dev.read = bmi2_i2c_read;
 	dev.write = bmi2_i2c_write;
 	dev.delay_us = bmi2_delay_us;
+  BMI270_InterfaceData
 	dev.intf_ptr = &i2c_addr;
 	int8_t rslt;
 

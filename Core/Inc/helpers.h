@@ -10,6 +10,21 @@ extern char log_path[256];
 extern char data_path[256];
 extern uint8_t SD_buffer[32768];
 
+struct BMI270_InterfaceData
+{
+    // Communication interface (I2C or SPI)
+    bmi2_intf interface;
+
+    // I2C settings
+    uint8_t i2cAddress;
+    TwoWire* i2cPort;
+
+    // SPI settings
+    uint8_t spiCSPin;
+    uint32_t spiClockFrequency;
+    SPIClass* spiPort;
+};
+
 enum PREFIX {
 	M_LOG, M_ADC, M_GPS, M_TP, M_ACC, M_IMU
 };
