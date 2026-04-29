@@ -94,16 +94,39 @@ static void MX_I2C2_Init(void);
 
 PUTCHAR_PROTOTYPE
 {
-  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-  return ch;
+	ITM_SendChar(ch);
+	return (ch);
+}
+
+int _write(int file, char *ptr, int len)
+{
+	int DataIdx;
+
+	for (DataIdx = 0; DataIdx < len; DataIdx++)
+	{
+		__io_putchar(*ptr++);
+	}
+	return len;
+}
+
+uint8_t BSP_SD_IsDetected(void)
+{
+  __IO uint8_t status = SD_PRESENT;
+
+  if (BSP_PlatformIsDetected() == 0x1)
+  {
+    status = SD_NOT_PRESENT;
+  }
+
+  return status;
 }
 /* Private function prototypes -----------------------------------------------*/
 
 void blink(int count, int dur) {
 	for (int i = 0; i < count; i++) {
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);
 		HAL_Delay(dur);
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET);
 		HAL_Delay(dur);
 	}
 }
@@ -204,9 +227,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 1) {
+	if (b270dev == 2) {
 		i2cb270dev = &hi2c1;
-	} else if (b270dev == 2) {
+	} else if (b270dev == 1) {
 		i2cb270dev = &hi2c2;
 	} else {
 		return HAL_ERROR; // wrong b270device
@@ -215,7 +238,7 @@ uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&reg,1,10000);
 	res = HAL_I2C_Master_Receive(i2cb270dev,addr << 1,&out,1,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to receive data from I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
+		log_printf("ERR: Failed to receive data from I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
@@ -223,9 +246,9 @@ uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 
 uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 1) {
+	if (b270dev == 2) {
 		i2cb270dev = &hi2c1;
-	} else if (b270dev == 2) {
+	} else if (b270dev == 1) {
 		i2cb270dev = &hi2c2;
 	} else {
 		return HAL_ERROR; // wrong b270device
@@ -233,7 +256,7 @@ uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 	uint8_t out;
 	uint8_t res = HAL_I2C_Mem_Read(i2cb270dev,addr << 1, reg, 1, &out, 1, 10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to read memory from I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
+		log_printf("ERR: Failed to read memory from I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 	return out;
@@ -241,9 +264,9 @@ uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t b270dev) {
 
 void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t b270dev) {
 	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 1) {
+	if (b270dev == 2) {
 		i2cb270dev = &hi2c1;
-	} else if (b270dev == 2) {
+	} else if (b270dev == 1) {
 		i2cb270dev = &hi2c2;
 	} else {
 		return; // wrong b270device
@@ -251,7 +274,7 @@ void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t b270dev) {
 	uint8_t wr[2] = {reg,data};
 	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&wr,2,10000);
 	if (res != HAL_OK) {
-		log_printf("ERR: Failed to write data to I2C module at address %02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
+		log_printf("ERR: Failed to write data to I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
 		Error_Handler();
 	}
 }
@@ -375,7 +398,7 @@ void Get_TPSens(float* tmp_ret, float* prs_ret) {
 }
 
 void Get_Acc(float* vacc) {
-	uint8_t ACC_ADDR = 0b0011001;
+	uint8_t ACC_ADDR = 0b0011000;
 	uint8_t x_reg = 0x28;
 	uint8_t y_reg = 0x2A;
 	uint8_t z_reg = 0x2C;
@@ -407,7 +430,7 @@ void Get_Acc(float* vacc) {
 }
 
 void Raw_Acc(uint8_t** buf) {
-	uint8_t ACC_ADDR = 0b0011001;
+	uint8_t ACC_ADDR = 0b0011000;
 	uint8_t x_reg = 0x28;
 	uint8_t out[6];
 
@@ -483,8 +506,10 @@ void Raw_TPSens(uint8_t** buf) {
 	uint8_t PT_DATA_CFG = 0x13;
 	uint8_t STATUS = 0x00;
 	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
-	while ((Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
+	uint8_t c;
+	while (c = (Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
 		// wait until data ready
+		//printf("STATUS: 0x%02x\n",c);
 	}
 	// read data
 	for (int i = 0; i < 5; i++) {
@@ -555,8 +580,9 @@ int main(void)
   /*
    * Initialize Processes
    */
-  //disable power to non-essential peripherals
-  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
+  //enable power to all peripherals for init process
+  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_RESET);
+
   initSDCard();
   printf("LOG: Mounted SD Card at %s\r\n",SDPath);
 
@@ -596,7 +622,7 @@ int main(void)
   createDataFile();
 
   //disable power to non-essential peripherals
-  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
+  //HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
 
   //
 
@@ -750,18 +776,13 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Configure LSE Drive Capability
-  */
-  HAL_PWR_EnableBkUpAccess();
-  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
-
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
-  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 1;
@@ -787,10 +808,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-
-  /** Enables the Clock Security System
-  */
-  HAL_RCCEx_EnableLSECSS();
 }
 
 /**

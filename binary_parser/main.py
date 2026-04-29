@@ -1,6 +1,8 @@
 import struct
+from sys import argv
 
-filename = "data90.bin"
+filename = argv[1]
+print(filename)
 
 M_IMU = 5
 

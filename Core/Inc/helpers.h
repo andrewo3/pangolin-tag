@@ -5,7 +5,7 @@
 #include "bmi270.h"
 
 extern ADC_HandleTypeDef hadc1;
-extern I2C_HandleTypeDef hi2c1;
+extern I2C_HandleTypeDef hi2c2;
 extern FIL LogFile;
 extern FIL DataFile;
 extern char log_path[256];

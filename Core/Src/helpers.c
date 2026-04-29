@@ -164,7 +164,7 @@ void setupTPSens() {
 void setupAccSleep() {
 	//setup accelerometer for generating interrupts on movement
 	log_printf("LOG: Configuring accelerometer for sleep\r\n");
-	uint8_t ACC_ADDR = 0b0011001;
+	uint8_t ACC_ADDR = 0b0011000;
 	uint8_t x_reg = 0x28;
 	uint8_t y_reg = 0x2A;
 	uint8_t z_reg = 0x2C;
@@ -206,7 +206,7 @@ void setupAccSleep() {
 int8_t bmi2_i2c_write(uint8_t regAddress, const uint8_t* dataBuffer, uint32_t numBytes, uint8_t* interfacePtr)
 
 {
-    if (HAL_I2C_Mem_Write(&hi2c1,
+    if (HAL_I2C_Mem_Write(&hi2c2,
                           (*interfacePtr)<<1,
                           regAddress,
                           I2C_MEMADD_SIZE_8BIT,
@@ -221,7 +221,7 @@ int8_t bmi2_i2c_write(uint8_t regAddress, const uint8_t* dataBuffer, uint32_t nu
 
 int8_t bmi2_i2c_read(uint8_t regAddress, uint8_t* dataBuffer, uint32_t numBytes, uint8_t* interfacePtr)
 {
-    if (HAL_I2C_Mem_Read(&hi2c1,
+    if (HAL_I2C_Mem_Read(&hi2c2,
                           (*interfacePtr)<<1,
                           regAddress,
                           I2C_MEMADD_SIZE_8BIT,
@@ -243,7 +243,7 @@ void bmi2_delay_us(uint32_t period, void *intf_ptr)
 
 void setupAccWake() {
 	//setup accelerometer for generating interrupts on movement
-	uint8_t ACC_ADDR = 0b0011001;
+	uint8_t ACC_ADDR = 0b0011000;
 	uint8_t x_reg = 0x28;
 	uint8_t y_reg = 0x2A;
 	uint8_t z_reg = 0x2C;
@@ -303,7 +303,7 @@ FRESULT createLogFile() {
 	FRESULT log_res;
 	int log_num = 0;
 	do {
-		sprintf(log_path,"log%i.txt\0",log_num);
+		sprintf(log_path,"test_log%i.txt\0",log_num);
 		//printf("Trying %s\r\n",log_path);
 		log_res = f_open(&LogFile, log_path, FA_CREATE_NEW | FA_WRITE);
 		log_num++;
@@ -321,7 +321,7 @@ FRESULT createDataFile() {
 	FRESULT data_res;
 	int data_num = 0;
 	do {
-		sprintf(data_path,"data%i.bin\0",data_num);
+		sprintf(data_path,"test_data%i.bin\0",data_num);
 		//printf("Trying %s\r\n",log_path);
 		data_res = f_open(&DataFile, data_path, FA_CREATE_NEW | FA_WRITE);
 		data_num++;
