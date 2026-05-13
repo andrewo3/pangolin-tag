@@ -34,6 +34,8 @@ FATFS/App/fatfs.o: ../FATFS/App/fatfs.c ../FATFS/App/fatfs.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rtc_ex.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_sd.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_ll_sdmmc.h \
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim.h \
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h \
  ../Core/Inc/stm32l4xx_it.h ../FATFS/Target/bsp_driver_sd.h \
@@ -79,6 +81,8 @@ FATFS/App/fatfs.o: ../FATFS/App/fatfs.c ../FATFS/App/fatfs.h \
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rtc_ex.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_sd.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_ll_sdmmc.h:
+../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim.h:
+../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h:
 ../Core/Inc/stm32l4xx_it.h:

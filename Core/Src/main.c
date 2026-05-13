@@ -1,21 +1,4 @@
 /* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-//#define ENABLE_SCRATCH_BUFFER
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -23,27 +6,24 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "helpers.h"
-#include "gps.h"
-#include <math.h>
-#include <string.h>
-#include "datetime.h"
-#include <stdarg.h>
-#include "bmi270.h"
+#include "logger.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -58,19 +38,13 @@ SD_HandleTypeDef hsd1;
 DMA_HandleTypeDef hdma_sdmmc1_rx;
 DMA_HandleTypeDef hdma_sdmmc1_tx;
 
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 DMA_HandleTypeDef hdma_sdmmc1;
-uint8_t on = 0;
-uint32_t start_ms;
-uint8_t state_change = 0;
-long last_button_press = 0;
-uint8_t imu_dt = 0; // in ms
-
-RTC_TimeTypeDef ti;
-RTC_DateTypeDef da;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,13 +59,8 @@ static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-#ifdef __GNUC__
-#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
-#else
-#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
-#endif
-
 PUTCHAR_PROTOTYPE
 {
 	ITM_SendChar(ch);
@@ -119,38 +88,6 @@ uint8_t BSP_SD_IsDetected(void)
   }
 
   return status;
-}
-/* Private function prototypes -----------------------------------------------*/
-
-void blink(int count, int dur) {
-	for (int i = 0; i < count; i++) {
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);
-		HAL_Delay(dur);
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET);
-		HAL_Delay(dur);
-	}
-}
-
-void log_printf(const char* fmt, ...) {
-	char buf[1024];
-
-	va_list args;
-
-	va_start(args,fmt);
-	vsprintf(buf,fmt,args);
-	va_end(args);
-
-	FRESULT open_success = f_open(&LogFile, log_path, FA_OPEN_APPEND|FA_WRITE);
-	f_write(&LogFile, buf, strlen(buf), NULL);
-	f_close(&LogFile);
-
-	printf("%s",buf);
-}
-
-void log_raw(uint8_t** buffer, int status) {
-	enum PREFIX tp_type = M_LOG;
-	write_buf(buffer,&tp_type,sizeof(tp_type));
-	write_buf(buffer,&status,4);
 }
 
 HAL_StatusTypeDef SD_DMAConfigRx(SD_HandleTypeDef *hsd);
@@ -210,329 +147,13 @@ uint8_t BSP_SD_WriteBlocks_DMA(uint32_t *pData, uint32_t WriteAddr, uint32_t Num
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	printf("Interrupt Triggered\r\n");
-	if (GPIO_Pin == Push_Button_Pin && HAL_GetTick() - last_button_press > 300) {
-	    last_button_press = HAL_GetTick();
-	    on ^= 1;
-	    state_change = 1;
-	    button_wake = 1;
-	}
-
-}
-
+	if (GPIO_Pin == ACC2_INT_Pin)
+		bmi270_drdy_irq_handler();
+ }
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-uint8_t Read_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t b270dev) {
-	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 2) {
-		i2cb270dev = &hi2c1;
-	} else if (b270dev == 1) {
-		i2cb270dev = &hi2c2;
-	} else {
-		return HAL_ERROR; // wrong b270device
-	}
-	uint8_t out;
-	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&reg,1,10000);
-	res = HAL_I2C_Master_Receive(i2cb270dev,addr << 1,&out,1,10000);
-	if (res != HAL_OK) {
-		log_printf("ERR: Failed to receive data from I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
-		Error_Handler();
-	}
-	return out;
-}
-
-uint8_t Read_I2C_Reg_NoStop(uint8_t addr, uint8_t reg, uint8_t b270dev) {
-	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 2) {
-		i2cb270dev = &hi2c1;
-	} else if (b270dev == 1) {
-		i2cb270dev = &hi2c2;
-	} else {
-		return HAL_ERROR; // wrong b270device
-	}
-	uint8_t out;
-	uint8_t res = HAL_I2C_Mem_Read(i2cb270dev,addr << 1, reg, 1, &out, 1, 10000);
-	if (res != HAL_OK) {
-		log_printf("ERR: Failed to read memory from I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
-		Error_Handler();
-	}
-	return out;
-}
-
-void Write_I2C_Reg(uint8_t addr, uint8_t reg, uint8_t data, uint8_t b270dev) {
-	I2C_HandleTypeDef* i2cb270dev;
-	if (b270dev == 2) {
-		i2cb270dev = &hi2c1;
-	} else if (b270dev == 1) {
-		i2cb270dev = &hi2c2;
-	} else {
-		return; // wrong b270device
-	}
-	uint8_t wr[2] = {reg,data};
-	uint8_t res = HAL_I2C_Master_Transmit(i2cb270dev,addr << 1,&wr,2,10000);
-	if (res != HAL_OK) {
-		log_printf("ERR: Failed to write data to I2C module at address 0x%02x - err code %i\r\n",addr, (*i2cb270dev).ErrorCode);
-		Error_Handler();
-	}
-}
-
-uint8_t alt_set = 0;
-float alt_ref;
-
-
-void Get_TPSens(float* tmp_ret, float* prs_ret) {
-	uint8_t addr = 0x76;
-	uint8_t PSR_B2 = 0;
-	uint8_t TMP_B2 = 3;
-
-	uint8_t PRS_CFG = 6;
-	uint8_t TMP_CFG = 7;
-	uint8_t TMP_COEF_SRCE = 0x28;
-	uint8_t MEAS_CFG = 8;
-	uint8_t CFG_REG = 9;
-	uint32_t prec_table[8] = {
-			524288,
-			1572864,
-			3670016,
-			7864320,
-			253952,
-			516096,
-			1040384,
-			2088960
-	};
-
-	//get coeffs
-	uint8_t coef_src = Read_I2C_Reg(addr,TMP_COEF_SRCE,1) & 0x80;
-	uint8_t coeffs[18] = {0};
-	for (int i = 0; i < 18; i++) {
-		coeffs[i] = Read_I2C_Reg(addr,i+0x10,1);
-	}
-	int16_t c0 = ((coeffs[1] & 0xf0) >> 4) | ((int16_t)coeffs[0] << 4);
-	if (c0 & 0x800) {
-		c0 |= 0xF000;
-	}
-	int16_t c1 = coeffs[2] | ((coeffs[1] & 0xf) << 8);
-	if (c1 & 0x800) {
-		c1 |= 0xF000;
-	}
-	int32_t c00 = ((coeffs[5] & 0xf0) >> 4) | (coeffs[4] << 4) | (coeffs[3] << 12);
-	if (c00 & 0x80000) {
-		c00 |= 0xFFF00000;
-	}
-	int32_t c10 = coeffs[7] | (coeffs[6] << 8) | ((coeffs[5] & 0xf) << 16);
-	if (c10 & 0x80000) {
-		c10 |= 0xFFF00000;
-	}
-	int16_t c01 = coeffs[9] | (coeffs[8] << 8);
-	int16_t c11 = coeffs[11] | (coeffs[10] << 8);
-	int16_t c20 = coeffs[13] | (coeffs[12] << 8);
-	int16_t c21 = coeffs[15] | (coeffs[14] << 8);
-	int16_t c30 = coeffs[17] | (coeffs[16] << 8);
-
-	//enable pressure and temp
-	Write_I2C_Reg(addr,TMP_CFG,coef_src,1); // set correct temp measurement source
-	Write_I2C_Reg(addr,MEAS_CFG,7,1);
-	uint8_t meas = 0;
-
-	// wait until everything returns as ready
-	while (meas & 0xf0 != 0xf0) {
-		meas = Read_I2C_Reg(addr,MEAS_CFG,1);
-	}
-
-	uint8_t cfg = Read_I2C_Reg(addr,CFG_REG,1);
-	uint8_t tshift = (cfg & 0x8) ? 1 : 0;
-	uint8_t pshift = (cfg & 0x4) ? 1 : 0;
-
-	uint32_t kT = prec_table[tshift];
-	uint32_t kP = prec_table[pshift];
-
-	uint8_t tprec = Read_I2C_Reg(addr,TMP_CFG,1) & 0x7;
-	uint8_t pprec = Read_I2C_Reg(addr,PRS_CFG,1) & 0x7;
-
-	//get pressure measurement
-	int32_t psr = 0;
-	for (int i = 0; i < 3; i++) {
-		uint8_t b = Read_I2C_Reg(addr,PSR_B2+i,1);
-		psr |= b << (2 - i) * 8;
-	}
-
-	//sign extend 2s complement
-	if (psr & 0x800000) {
-		psr |= 0xFF000000;
-	}
-
-	psr >>= pshift;
-
-	//log_printf("Read %i (psr) from pressure sensor.\r\n",psr);
-
-	int32_t tmp = 0;
-	for (int i = 0; i < 3; i++) {
-		uint8_t b = Read_I2C_Reg(addr,TMP_B2+i,1);
-		tmp |=  b << (2 - i) * 8;
-	}
-
-	//sign extend 2s complement
-	if (tmp & 0x800000) {
-		tmp |= 0xFF000000;
-	}
-
-	tmp >>= tshift;
-
-	//log_printf("Read %i (tmp) from pressure sensor (shift=%i).\r\n",tmp,tshift);
-
-	float pscaled = (float)psr / kP;
-	float tscaled = (float)tmp / kT;
-
-	float Pcomp = c00 +
-			pscaled * (c10 + pscaled * (c20 + pscaled * c30)) +
-			tscaled * c01 +
-			tscaled * pscaled * (c11 + pscaled * c21);
-	float Tcomp = c0*0.5 + c1*tscaled;
-
-	*prs_ret = Pcomp;
-	*tmp_ret = Tcomp;
-
-}
-
-void Get_Acc(float* vacc) {
-	uint8_t ACC_ADDR = 0b0011000;
-	uint8_t x_reg = 0x28;
-	uint8_t y_reg = 0x2A;
-	uint8_t z_reg = 0x2C;
-
-	float sens = 0.001; // g/digit * m/s^2/g
-
-	uint8_t CTRL_REG1 = 0x20;
-	uint8_t CTRL_REG4 = 0x23;
-
-	int16_t x_out = (Read_I2C_Reg(ACC_ADDR,x_reg,2) | (Read_I2C_Reg(ACC_ADDR,x_reg + 1,2) << 8)) >> 4;
-	if (x_out & 0x800) {
-		x_out |= 0xF000;
-	}
-
-	int16_t y_out = (Read_I2C_Reg(ACC_ADDR,y_reg,2) | (Read_I2C_Reg(ACC_ADDR,y_reg + 1,2) << 8)) >> 4;
-	if (y_out & 0x800) {
-		y_out |= 0xF000;
-	}
-
-	int16_t z_out = (Read_I2C_Reg(ACC_ADDR,z_reg,2) | (Read_I2C_Reg(ACC_ADDR,z_reg + 1,2) << 8)) >> 4;
-	if (z_out & 0x800) {
-		z_out |= 0xF000;
-	}
-
-	vacc[0] = x_out * sens;
-	vacc[1] = y_out * sens;
-	vacc[2] = z_out * sens;
-
-}
-
-void Raw_Acc(uint8_t** buf) {
-	uint8_t ACC_ADDR = 0b0011000;
-	uint8_t x_reg = 0x28;
-	uint8_t out[6];
-
-	for (int i = 0; i < 6; i++) {
-		out[i] = Read_I2C_Reg(ACC_ADDR,x_reg+i,2);
-	}
-	enum PREFIX tp_type = M_ACC;
-	write_buf(buf,&tp_type,sizeof(tp_type));
-	write_buf(buf,out,6);
-}
-
-void Raw_IMU(uint8_t** buf) {
-
-	//get length of fifo
-	uint16_t fifo_length = 0;
-	int8_t rslt = bmi2_get_fifo_length(&fifo_length, &b270dev);
-	printf("Fifo length: %i\r\n",fifo_length);
-	if (rslt != BMI2_OK) {
-	    printf("Error getting FIFO length: %d\n", rslt);
-	    return;
-	}
-
-	//read off of fifo
-	uint8_t fifo_data[2048];
-	struct bmi2_fifo_frame fifo_frame = {0};
-	fifo_frame.data = fifo_data;
-	fifo_frame.length = fifo_length;
-
-	rslt = bmi2_read_fifo_data(&fifo_frame, &b270dev);
-
-	if (rslt != BMI2_OK) {
-	    printf("Error reading FIFO: %d\n", rslt);
-	    return;
-	}
-	enum PREFIX tp_type = M_IMU;
-	write_buf(buf,&tp_type,sizeof(tp_type));
-	write_buf(buf,&fifo_length,sizeof(fifo_length));
-	write_buf(buf,fifo_data,fifo_length);
-	printf("write length %i, at index %i\r\n",fifo_length,(*buf)-SD_buffer-fifo_length);
-
-
-}
-
-void Get_TPSens2(float* tmp_ret, float* prs_ret) {
-	uint8_t addr = 0x60;
-	uint8_t out_bytes[5];
-	uint8_t CTRL_REG1 = 0x26;
-	uint8_t PT_DATA_CFG = 0x13;
-	uint8_t STATUS = 0x00;
-	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
-	while ((Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
-		// wait until data ready
-	}
-	// read data
-	for (int i = 0; i < 5; i++) {
-		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1,1);
-	}
-
-	float pasc = (((out_bytes[2] >> 6) & 0x3) | (out_bytes[1] << 2) | (out_bytes[0] << 10)) + (((out_bytes[2] >> 4) & 0x3)/4.0);
-	*prs_ret = pasc;
-
-	int8_t itemp = out_bytes[3];
-
-	float temp = (float)itemp + ((out_bytes[4]>>4) & 0xf)/16.0;
-	*tmp_ret = temp;
-
-}
-
-void Raw_TPSens(uint8_t** buf) {
-	uint8_t addr = 0x60;
-	uint8_t out_bytes[5];
-	uint8_t CTRL_REG1 = 0x26;
-	uint8_t PT_DATA_CFG = 0x13;
-	uint8_t STATUS = 0x00;
-	//log_printf("Status: %02x\r\n",Read_I2C_Reg_NoStop(addr,CTRL_REG1));
-	uint8_t c;
-	while (c = (Read_I2C_Reg(addr,STATUS,1) & 0x0e) != 0x0e) {
-		// wait until data ready
-		//printf("STATUS: 0x%02x\n",c);
-	}
-	// read data
-	for (int i = 0; i < 5; i++) {
-		out_bytes[i] = Read_I2C_Reg_NoStop(addr, i+1,1);
-	}
-	enum PREFIX tp_type = M_TP;
-	write_buf(buf,&tp_type,sizeof(tp_type));
-	write_buf(buf,out_bytes,5);
-}
-
-void init_everything() {
-	MX_GPIO_Init();
-	MX_DMA_Init();
-	MX_SDMMC1_SD_Init();
-	MX_FATFS_Init();
-	MX_RTC_Init();
-	MX_ADC1_Init();
-	MX_USART2_UART_Init();
-	MX_USART1_UART_Init();
-	MX_I2C1_Init();
-}
-
-
 /* USER CODE END 0 */
 
 /**
@@ -543,7 +164,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -552,7 +172,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -562,7 +181,6 @@ int main(void)
   PeriphCommonClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -576,187 +194,18 @@ int main(void)
   MX_USART1_UART_Init();
   MX_I2C1_Init();
   MX_I2C2_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  /*
-   * Initialize Processes
-   */
-  //enable power to all peripherals for init process
-  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_RESET);
-
-  initSDCard();
-  printf("LOG: Mounted SD Card at %s\r\n",SDPath);
-
-  createLogFile();
-  uint32_t end_ms = start_ms;
-
-  uint32_t elapsed_s = 0;
-  uint32_t last_elapsed_s = 0;
-  char write_str[256];
-
-  char* AmPm[2] = {"AM","PM"};
-  char* days[7] = {"Mon","Tue","Wed","Thur","Fri","Sat","Sun"};
-
-  uint8_t recv[83];
-  const uint16_t TEMP_SENS_ADDR = 0b1001000;
-  uint8_t RTR = 0;
-  uint8_t file_open = 0;
-
-  uint8_t name_changed = 0;
-
-  uint8_t led_on = 1;
-  long count = 0;
-  float ADC_off = 0.15;
-  float MOS_drop = 0.12;
-
-  //reset RTC to epoch
-  DateTime epoch = fromepoch(0);
-  RTC_TimeTypeDef ti = epoch.ti;
-  RTC_DateTypeDef da = epoch.da;
-  printf("Start Date: %02i-%02i-%02i\r\n",da.Month,da.Date,da.Year);
-  printf("Start Time: %02i:%02i:%02i\r\n",ti.Hours,ti.Minutes,ti.Seconds);
-  HAL_RTC_SetDate(&hrtc,&epoch.da,RTC_FORMAT_BIN);
-  HAL_RTC_SetTime(&hrtc,&epoch.ti,RTC_FORMAT_BIN);
-
-
-  //create file
-  createDataFile();
-
-  //disable power to non-essential peripherals
-  //HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
-
-  //
-
-  waitForInterruptAndWakeup();
-  //initSDCard();
-  led_on = 1;
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-	 end_ms = HAL_GetTick();
-	 last_elapsed_s = elapsed_s;
-	 elapsed_s = (end_ms - start_ms) / 1000;
-
-	 if (button_wake) { // if button was pressed to wake back up, flush buffer into SD card.
-		 printf("Button press: flushing buffer...\r\n");
-		 flush_buf(&SD_writebuf);
-		 button_wake = 0;
-	 }
-
-	 Raw_IMU(&SD_writebuf);
-	 //check battery
-	 //float V = pollBatteryVoltage();
-	 //printf("Battery Voltage: %.2f V\r\n",V);
-	 //determine LED
-	 if (elapsed_s != last_elapsed_s) {
-		 HAL_RTC_GetTime(&hrtc,&ti,RTC_FORMAT_BIN);
-		 HAL_RTC_GetDate(&hrtc,&da,RTC_FORMAT_BIN);
-		 printf("Date: %02i-%02i-%02i\r\n",da.Month,da.Date,da.Year);
-		 printf("Time: %02i:%02i:%02i\r\n",ti.Hours,ti.Minutes,ti.Seconds);
-
-		 long total_elapsed = toepoch((DateTime){ti, da});
-		 printf("Elapsed time: %i\r\n",total_elapsed);
-		 enum PREFIX tp_type = M_TIME;
-
-		 write_buf(&SD_writebuf,&tp_type,sizeof(tp_type));
-		 write_buf(&SD_writebuf,&total_elapsed,sizeof(long));
-
-
-		 pollADC(&SD_writebuf);
-
-		 count++;
-
-		 float temp3;
-		 float pascals2;
-		 log_printf("LOG: Reading Temp + Barometer IC #2\r\n");
-		 //Get_TPSens2(&temp3, &pascals2);
-		 Raw_TPSens(&SD_writebuf);
-
-		 float acc[3];
-		 log_printf("LOG: Reading Accelerometer\r\n");
-		 //Get_Acc(acc);
-		 Raw_Acc(&SD_writebuf);
-     
-		 int uart_res = 0;
-		 int msg_len = 0;
-
-		 log_printf("LOG: Querying GPS Module\r\n");
-		 char* current = recv;
-		 current++;
-		 uint8_t end = 0;
-		 //continue until RMC message found
-		 while (!end || strncmp(recv,"$GNRMC",6)) {
-
-			 //receive new character from GPS
-			 __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF);
-			  uart_res = HAL_UART_Receive(&huart1, current, 1, 1);
-			  //reset message length when end found
-			  if (current == recv) {
-				  msg_len = 0;
-			  }
-			  //if successful
-			  if (uart_res == 0) {
-				  current++;
-				  msg_len++;
-				  //if we reach end of message
-				  if ((*(current-1) == '\r' || *(current-1) == '\n') && current != recv) {
-					  *current = 0;
-					  current = recv;
-					  //log_printf("Found one GPS message: %s\r",recv);
-					  end = 1;
-				  } else {
-					  end = 0;
-				  }
-			  }
-		 }
-		 char* RMC = recv;
-		 RMC[msg_len] = 0;
-		 //char* placeholder = "$GNRMC,151227.40,A,4723.54036,N,00826.88672,E,0.0,81.6,111022,,,R*7C";
-		 //strcpy(RMC,placeholder);
-		 log_printf("LOG: %s\r\n", RMC);
-
-		 GPSData gpsOut;
-		 int gps_res = parseNMEA(RMC,&gpsOut);
-
-		 ti = gpsOut.ti;
-		 da = gpsOut.da;
-
-		 if (gps_res == G_OK) {
-			 enum PREFIX gps_type = M_GPS;
-			 write_buf(&SD_writebuf,&gps_type,sizeof(gps_type));
-			 write_buf(&SD_writebuf,&recv,83);
-		 }
-
-		 blink(1,10);
-		 //blink every second to indicate that it is functioning if the SD card was detected
-		 if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_10) == 1) {
-			 blink(1,10);
-		 }
-		 //HAL_Delay(1000);
-
-		 //if gps was found, or more than 5 minutes passed, go back to sleep and wait for interrupt.
-		 if (gps_res == G_OK || elapsed_s >= 10) {
-			 led_on = 0;
-			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
-			 if (gps_res != G_OK) {
-				 log_printf("Timeout reached.");
-			 } else {
-				 log_printf("GPS Fix acquired.");
-			 }
-			 log_printf(" Going back to sleep...\r\n");
-			 waitForInterruptAndWakeup();
-			 led_on = 1;
-			 HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, led_on);
-		 }
-	 }
-  }
+  HAL_GPIO_WritePin(Power_Disable_GPIO_Port, Power_Disable_Pin, GPIO_PIN_RESET);
+  logger_start();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
   /* USER CODE END 3 */
 }
 
@@ -845,14 +294,12 @@ static void MX_ADC1_Init(void)
 {
 
   /* USER CODE BEGIN ADC1_Init 0 */
-
   /* USER CODE END ADC1_Init 0 */
 
   ADC_MultiModeTypeDef multimode = {0};
   ADC_ChannelConfTypeDef sConfig = {0};
 
   /* USER CODE BEGIN ADC1_Init 1 */
-
   /* USER CODE END ADC1_Init 1 */
 
   /** Common config
@@ -898,7 +345,6 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-
   /* USER CODE END ADC1_Init 2 */
 
 }
@@ -912,11 +358,9 @@ static void MX_I2C1_Init(void)
 {
 
   /* USER CODE BEGIN I2C1_Init 0 */
-
   /* USER CODE END I2C1_Init 0 */
 
   /* USER CODE BEGIN I2C1_Init 1 */
-
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.Timing = 0x10D19CE4;
@@ -946,7 +390,6 @@ static void MX_I2C1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN I2C1_Init 2 */
-
   /* USER CODE END I2C1_Init 2 */
 
 }
@@ -960,11 +403,9 @@ static void MX_I2C2_Init(void)
 {
 
   /* USER CODE BEGIN I2C2_Init 0 */
-
   /* USER CODE END I2C2_Init 0 */
 
   /* USER CODE BEGIN I2C2_Init 1 */
-
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
   hi2c2.Init.Timing = 0x10D19CE4;
@@ -994,7 +435,6 @@ static void MX_I2C2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN I2C2_Init 2 */
-
   /* USER CODE END I2C2_Init 2 */
 
 }
@@ -1008,14 +448,12 @@ static void MX_RTC_Init(void)
 {
 
   /* USER CODE BEGIN RTC_Init 0 */
-
   /* USER CODE END RTC_Init 0 */
 
   RTC_TimeTypeDef sTime = {0};
   RTC_DateTypeDef sDate = {0};
 
   /* USER CODE BEGIN RTC_Init 1 */
-
   /* USER CODE END RTC_Init 1 */
 
   /** Initialize RTC Only
@@ -1034,7 +472,6 @@ static void MX_RTC_Init(void)
   }
 
   /* USER CODE BEGIN Check_RTC_BKUP */
-  return;
   /* USER CODE END Check_RTC_BKUP */
 
   /** Initialize RTC and set the Time and Date
@@ -1059,7 +496,6 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RTC_Init 2 */
-
   /* USER CODE END RTC_Init 2 */
 
 }
@@ -1073,11 +509,9 @@ static void MX_SDMMC1_SD_Init(void)
 {
 
   /* USER CODE BEGIN SDMMC1_Init 0 */
-
   /* USER CODE END SDMMC1_Init 0 */
 
   /* USER CODE BEGIN SDMMC1_Init 1 */
-
   /* USER CODE END SDMMC1_Init 1 */
   hsd1.Instance = SDMMC1;
   hsd1.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
@@ -1092,6 +526,48 @@ static void MX_SDMMC1_SD_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -1100,11 +576,9 @@ static void MX_USART1_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART1_Init 0 */
-
   /* USER CODE END USART1_Init 0 */
 
   /* USER CODE BEGIN USART1_Init 1 */
-
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 9600;
@@ -1121,7 +595,6 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-
   /* USER CODE END USART1_Init 2 */
 
 }
@@ -1135,11 +608,9 @@ static void MX_USART2_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART2_Init 0 */
-
   /* USER CODE END USART2_Init 0 */
 
   /* USER CODE BEGIN USART2_Init 1 */
-
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
@@ -1156,7 +627,6 @@ static void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
   /* USER CODE END USART2_Init 2 */
 
 }
@@ -1189,7 +659,6 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -1203,7 +672,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(Battery_LED_GPIO_Port, Battery_LED_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(Power_Enable_GPIO_Port, Power_Enable_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(Power_Disable_GPIO_Port, Power_Disable_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|Error_LED_Pin, GPIO_PIN_RESET);
@@ -1213,6 +682,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Push_Button_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ACC2_INT_Pin */
+  GPIO_InitStruct.Pin = ACC2_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ACC2_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Battery_LED_Pin */
   GPIO_InitStruct.Pin = Battery_LED_Pin;
@@ -1227,12 +702,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Acc_Int_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : Power_Enable_Pin */
-  GPIO_InitStruct.Pin = Power_Enable_Pin;
+  /*Configure GPIO pin : Power_Disable_Pin */
+  GPIO_InitStruct.Pin = Power_Disable_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(Power_Enable_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(Power_Disable_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD2_Pin Error_LED_Pin */
   GPIO_InitStruct.Pin = LD2_Pin|Error_LED_Pin;
@@ -1251,16 +726,17 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
 
 /**
@@ -1274,7 +750,6 @@ void Error_Handler(void)
 	HAL_GPIO_WritePin(GPIOA, Error_LED_Pin, GPIO_PIN_SET);
   while (1)
   {
-	  blink(1,500);
   }
   /* USER CODE END Error_Handler_Debug */
 }
@@ -1289,8 +764,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: log_printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

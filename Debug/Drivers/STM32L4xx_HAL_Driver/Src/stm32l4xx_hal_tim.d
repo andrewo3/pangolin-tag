@@ -1,7 +1,6 @@
-Core/Src/helpers.o: ../Core/Src/helpers.c ../Core/Inc/helpers.h \
- ../FATFS/App/fatfs.h ../Middlewares/Third_Party/FatFs/src/ff.h \
- ../Middlewares/Third_Party/FatFs/src/integer.h ../FATFS/Target/ffconf.h \
- ../Core/Inc/main.h ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h \
+Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_tim.o: \
+ ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_tim.c \
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h \
  ../Core/Inc/stm32l4xx_hal_conf.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rcc.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_def.h \
@@ -34,21 +33,10 @@ Core/Src/helpers.o: ../Core/Src/helpers.c ../Core/Inc/helpers.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rtc_ex.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_sd.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_ll_sdmmc.h \
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim.h \
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h \
  ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h \
- ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h \
- ../Core/Inc/stm32l4xx_it.h ../FATFS/Target/bsp_driver_sd.h \
- ../FATFS/Target/fatfs_platform.h \
- ../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h \
- ../Middlewares/Third_Party/FatFs/src/diskio.h \
- ../Middlewares/Third_Party/FatFs/src/ff.h ../FATFS/Target/sd_diskio.h \
- ../Core/Inc/bmi270_api/bmi270.h ../Core/Inc/bmi270_api/bmi2.h \
- ../Core/Inc/bmi270_api/bmi2_defs.h
-../Core/Inc/helpers.h:
-../FATFS/App/fatfs.h:
-../Middlewares/Third_Party/FatFs/src/ff.h:
-../Middlewares/Third_Party/FatFs/src/integer.h:
-../FATFS/Target/ffconf.h:
-../Core/Inc/main.h:
+ ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal.h:
 ../Core/Inc/stm32l4xx_hal_conf.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rcc.h:
@@ -82,15 +70,7 @@ Core/Src/helpers.o: ../Core/Src/helpers.c ../Core/Inc/helpers.h \
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rtc_ex.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_sd.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_ll_sdmmc.h:
+../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim.h:
+../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_tim_ex.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart.h:
 ../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_uart_ex.h:
-../Core/Inc/stm32l4xx_it.h:
-../FATFS/Target/bsp_driver_sd.h:
-../FATFS/Target/fatfs_platform.h:
-../Middlewares/Third_Party/FatFs/src/ff_gen_drv.h:
-../Middlewares/Third_Party/FatFs/src/diskio.h:
-../Middlewares/Third_Party/FatFs/src/ff.h:
-../FATFS/Target/sd_diskio.h:
-../Core/Inc/bmi270_api/bmi270.h:
-../Core/Inc/bmi270_api/bmi2.h:
-../Core/Inc/bmi270_api/bmi2_defs.h:
